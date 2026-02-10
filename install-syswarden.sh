@@ -285,7 +285,10 @@ download_list() {
             exit 1
         fi
         log "INFO" "Download success. Lines: $count"
-        grep -E '^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$' "$output_file" > "$TMP_DIR/clean_list.txt"
+        
+        # [FIX] Added 'tr -d \r' to remove Windows line endings before grep
+        tr -d '\r' < "$output_file" | grep -E '^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$' > "$TMP_DIR/clean_list.txt"
+        
         FINAL_LIST="$TMP_DIR/clean_list.txt"
     else
         log "ERROR" "Failed to download blocklist."
@@ -298,6 +301,7 @@ apply_firewall_rules() {
     
     if [[ "$FIREWALL_BACKEND" == "nftables" ]]; then
         log "INFO" "Configuring Nftables Set..."
+        # Create a temporary file for the Nftables config
         cat <<EOF > "$TMP_DIR/syswarden.nft"
 table inet syswarden_table {
     set $SET_NAME {
@@ -310,24 +314,27 @@ $(awk '{print $1 ","}' "$FINAL_LIST")
     }
     chain input {
         type filter hook input priority filter - 10; policy accept;
+        # Drop traffic from the Blacklist
         ip saddr @$SET_NAME log prefix "[SysWarden-BLOCK] " flags all drop
+        
         # Toxic Ports (LOG + DROP)
+        # Block common attack vectors immediately
         tcp dport { 23, 445, 1433, 3389, 5900 } log prefix "[SysWarden-BLOCK] " flags all drop
     }
 }
 EOF
+        # Apply the configuration atomically
         nft -f "$TMP_DIR/syswarden.nft"
         log "INFO" "Nftables rules applied successfully."
 
     elif [[ "$FIREWALL_BACKEND" == "firewalld" ]]; then
-        # FIX: Ensure Firewalld is actually running
+        # Ensure Firewalld is actually running
         if ! systemctl is-active --quiet firewalld; then
             log "WARN" "Firewalld service is stopped. Starting it now..."
             systemctl enable --now firewalld
         fi
         
         # [CRITICAL] Opening custom SSH port in FirewallD
-        # If a specific port is defined (and not empty), open it.
         if [[ -n "${SSH_PORT:-}" ]]; then
             log "INFO" "Opening SSH port $SSH_PORT in Firewalld..."
             firewall-cmd --permanent --add-port="${SSH_PORT}/tcp" 2>/dev/null || true
@@ -336,74 +343,70 @@ EOF
 
         log "INFO" "Configuring Firewalld IPSet..."
         
-        # [FIX] First delete the Rule that uses the IPSet (otherwise delete-ipset will fail)
+        # 1. Cleanup old rules/sets to prevent conflicts
         firewall-cmd --permanent --remove-rich-rule="rule source ipset='$SET_NAME' log prefix='[SysWarden-BLOCK] ' level='info' drop" 2>/dev/null || true
         firewall-cmd --reload
-        
-        # 1. Clean old config to avoid conflicts
         firewall-cmd --permanent --delete-ipset="$SET_NAME" 2>/dev/null || true
         firewall-cmd --reload
 
-        # 2. Create Permanent IPSet (No hashsize for Alma/RHEL compatibility)
+        # 2. Create Permanent IPSet 
+        # Note: We use a large maxelem to accommodate the Critical list
         firewall-cmd --permanent --new-ipset="$SET_NAME" --type=hash:ip --option=family=inet --option=maxelem=200000
         firewall-cmd --reload
         
-        # 3. Import IPs to PERMANENT config (Crucial step fixed)
+        # 3. Import IPs to PERMANENT config
         log "INFO" "Importing IPs into Firewalld (This may take a moment)..."
         firewall-cmd --permanent --ipset="$SET_NAME" --add-entries-from-file="$FINAL_LIST"
         
         # 4. Add the Drop Rule
         firewall-cmd --permanent --add-rich-rule="rule source ipset='$SET_NAME' log prefix='[SysWarden-BLOCK] ' level='info' drop"
+        
         # Toxic Ports (LOG + DROP)
         for port in 23 445 1433 3389 5900; do
-            # Add log prefix + drop in the same rich rule
             firewall-cmd --permanent --add-rich-rule="rule port port=\"$port\" protocol=\"tcp\" log prefix=\"[SysWarden-BLOCK] \" level=\"info\" drop" 2>/dev/null || true
         done
         
-        # 5. Final Reload to apply everything
+        # 5. Final Reload
         firewall-cmd --reload
         log "INFO" "Firewalld rules applied successfully."
 
     else
+        # --- IPSET / IPTABLES FALLBACK (ALMALINUX SAFE MODE) ---
         log "INFO" "Configuring IPSet and Iptables..."
         
         # Pre-cleanup
         ipset destroy "${SET_NAME}_tmp" 2>/dev/null || true
         
-        # FIX ROCKY/RHEL IFS ISSUE:
-        # We execute commands directly without using a variable to prevent
-        # the script (with strict IFS) from treating the whole string as a single argument.
-        
-        if [[ -f /etc/debian_version ]]; then
-            # DEBIAN/UBUNTU (Optimization)
-            ipset create "${SET_NAME}_tmp" hash:ip hashsize 131072 maxelem 200000 -exist
-        else
-            # RHEL/ROCKY/ALMA (Strict syntax 'family inet' and standard hashsize)
-            ipset create "${SET_NAME}_tmp" hash:ip family inet hashsize 65536 maxelem 200000 -exist
-        fi
+        # [FIX] AlmaLinux Fix: REMOVED 'hashsize' and 'family inet'.
+        # We let the Kernel decide the internal structure to avoid 'Invalid argument'.
+        ipset create "${SET_NAME}_tmp" hash:ip maxelem 200000 -exist
         
         log "INFO" "Loading IPs into temporary set..."
         sed "s/^/add ${SET_NAME}_tmp /" "$FINAL_LIST" | ipset restore
         
-        # Create Real Set and Swap (Same separated logic)
-        if [[ -f /etc/debian_version ]]; then
-            ipset create "$SET_NAME" hash:ip hashsize 131072 maxelem 200000 -exist
-        else
-            ipset create "$SET_NAME" hash:ip family inet hashsize 65536 maxelem 200000 -exist
-        fi
+        # Create Real Set
+        ipset create "$SET_NAME" hash:ip maxelem 200000 -exist
         
+        # Atomic Swap
         ipset swap "${SET_NAME}_tmp" "$SET_NAME"
         ipset destroy "${SET_NAME}_tmp"
         
+        # Apply IPTables Drop Rule
         if ! iptables -C INPUT -m set --match-set "$SET_NAME" src -j DROP 2>/dev/null; then
             iptables -I INPUT 1 -m set --match-set "$SET_NAME" src -j DROP
             iptables -I INPUT 1 -m set --match-set "$SET_NAME" src -j LOG --log-prefix "[SysWarden-BLOCK] "
-            # Toxic Ports (LOG + DROP)
-            # Insert specific rules for these ports
+            
+            # Toxic Ports
             iptables -I INPUT 2 -p tcp -m multiport --dports 23,445,1433,3389,5900 -j DROP
             iptables -I INPUT 2 -p tcp -m multiport --dports 23,445,1433,3389,5900 -j LOG --log-prefix "[SysWarden-BLOCK] "
-            log "INFO" "Iptables DROP rule inserted."
-            if command -v netfilter-persistent >/dev/null; then netfilter-persistent save; fi
+            
+            log "INFO" "Iptables DROP rules inserted."
+            
+            if command -v netfilter-persistent >/dev/null; then 
+                netfilter-persistent save; 
+            elif command -v service >/dev/null && [ -f /etc/init.d/iptables ]; then
+                service iptables save;
+            fi
         fi
     fi
 }
@@ -773,7 +776,13 @@ uninstall_syswarden() {
     echo -e "\n${RED}=== Uninstalling SysWarden ===${NC}"
     log "WARN" "Starting Uninstallation..."
 
-    # 1. Cleaning up Auto-Reporter (Rebranded)
+    # 0. Load Configuration (Crucial to retrieve Wazuh IP/Ports for cleanup)
+    if [[ -f "$CONF_FILE" ]]; then
+        log "INFO" "Loading configuration file to clean up specific rules..."
+        source "$CONF_FILE"
+    fi
+
+    # 1. Cleaning up Auto-Reporter
     if systemctl is-active --quiet syswarden-reporter; then
         log "INFO" "Stopping SysWarden Reporter service..."
         systemctl disable --now syswarden-reporter 2>/dev/null || true
@@ -796,27 +805,55 @@ uninstall_syswarden() {
     # 3. Cleaning Firewall Rules
     log "INFO" "Cleaning firewall rules..."
     
+    # Nftables: Easy, we just kill the table
     if command -v nft >/dev/null; then
         nft delete table inet syswarden_table 2>/dev/null || true
     fi
 
+    # Firewalld: We need variables to remove specific Allow rules
     if command -v firewall-cmd >/dev/null && systemctl is-active --quiet firewalld; then
+        # Remove the main Blocklist Rule
         firewall-cmd --permanent --remove-rich-rule="rule source ipset='$SET_NAME' log prefix='[SysWarden-BLOCK] ' level='info' drop" 2>/dev/null || true
+        
+        # Remove Wazuh Whitelist (Only if we know the IP)
+        if [[ -n "$WAZUH_IP" ]]; then
+            # Default ports if config file didn't save them (backward compatibility)
+            local w_port=${WAZUH_PORT:-1514}
+            local w_reg=${WAZUH_REG_PORT:-1515}
+            
+            log "INFO" "Removing Wazuh Whitelist rules for IP $WAZUH_IP..."
+            firewall-cmd --permanent --remove-rich-rule="rule family='ipv4' source address='$WAZUH_IP' port port='$w_port' protocol='tcp' accept" 2>/dev/null || true
+            firewall-cmd --permanent --remove-rich-rule="rule family='ipv4' source address='$WAZUH_IP' port port='$w_reg' protocol='tcp' accept" 2>/dev/null || true
+        fi
+        
+        # Remove the IPSet
         firewall-cmd --permanent --delete-ipset="$SET_NAME" 2>/dev/null || true
         firewall-cmd --reload 2>/dev/null || true
     fi
 
+    # Iptables: We need variables to remove specific Allow rules
     if command -v iptables >/dev/null; then
+        # Remove Blocklist Rules
         iptables -D INPUT -m set --match-set "$SET_NAME" src -j DROP 2>/dev/null || true
         iptables -D INPUT -m set --match-set "$SET_NAME" src -j LOG --log-prefix "[SysWarden-BLOCK] " 2>/dev/null || true
+        
+        # Remove Wazuh Whitelist (Only if we know the IP)
+        if [[ -n "$WAZUH_IP" ]]; then
+            local w_port=${WAZUH_PORT:-1514}
+            local w_reg=${WAZUH_REG_PORT:-1515}
+            iptables -D INPUT -s "$WAZUH_IP" -p tcp -m multiport --sports $w_port,$w_reg -j ACCEPT 2>/dev/null || true
+        fi
+
+        # Save changes
         if command -v netfilter-persistent >/dev/null; then netfilter-persistent save 2>/dev/null || true; fi
+        if command -v service >/dev/null && [ -f /etc/init.d/iptables ]; then service iptables save 2>/dev/null || true; fi
     fi
     
     if command -v ipset >/dev/null; then
         ipset destroy "$SET_NAME" 2>/dev/null || true
     fi
 
-    # 3b. Cleaning up Wazuh Agent (Artifacts & Repos)
+    # 4. Cleaning up Wazuh Agent (Deep Clean)
     if command -v wazuh-agentd >/dev/null || systemctl list-unit-files | grep -q wazuh-agent; then
         log "INFO" "Removing Wazuh Agent..."
 
@@ -825,14 +862,11 @@ uninstall_syswarden() {
 
         # Remove package and repository source list based on OS
         if [[ -f /etc/debian_version ]]; then
-            # Debian/Ubuntu: Purge package and remove list file
             apt-get purge -y wazuh-agent >/dev/null 2>&1
             rm -f /etc/apt/sources.list.d/wazuh.list
-            # Optional: Remove the GPG key added
             rm -f /usr/share/keyrings/wazuh.gpg
             
         elif [[ -f /etc/redhat-release ]]; then
-            # RHEL/Alma/Rocky: Remove package and repo file
             dnf remove -y wazuh-agent >/dev/null 2>&1
             rm -f /etc/yum.repos.d/wazuh.repo
         fi
@@ -844,11 +878,9 @@ uninstall_syswarden() {
         log "INFO" "Wazuh Agent, configurations, and repositories removed."
     fi
 
-    # 4. Cleaning Configs
+    # 5. Cleaning Configs
     rm -f "$CONF_FILE"
     log "INFO" "Configuration file removed."
-    
-    # Note: We do not remove fail2ban or python3-requests as they may be used by something else.
     
     echo -e "${GREEN}Uninstallation complete. SysWarden and Reporter have been removed.${NC}"
     exit 0
@@ -861,28 +893,34 @@ setup_wazuh_agent() {
     read -p "Install Wazuh Agent? (y/N): " response
 
     if [[ "$response" =~ ^[Yy]$ ]]; then
-        # 1. User Interaction: Collect Manager Info
+        # 1. User Interaction: Collect Manager Info & PORTS
         read -p "Enter Wazuh Manager IP (Required): " WAZUH_IP
         if [[ -z "$WAZUH_IP" ]]; then
             log "ERROR" "Wazuh Manager IP is missing. Skipping installation."
             return
         fi
-		
-		# --- Firewall Whitelisting for Wazuh Manager ---
-        log "INFO" "Whitelisting Wazuh Manager ports (1514/1515) in Firewall..."
+        
+        # [NEW] Custom Ports Input
+        read -p "Enter Connection Port [Default: 1514]: " WAZUH_PORT
+        WAZUH_PORT=${WAZUH_PORT:-1514}
+        
+        read -p "Enter Enrollment Port [Default: 1515]: " WAZUH_REG_PORT
+        WAZUH_REG_PORT=${WAZUH_REG_PORT:-1515}
+
+        # --- Firewall Whitelisting for Wazuh Manager (Custom Ports) ---
+        log "INFO" "Whitelisting Wazuh Manager ports ($WAZUH_PORT/$WAZUH_REG_PORT) in Firewall..."
         
         if [[ "$FIREWALL_BACKEND" == "firewalld" ]]; then
             # Firewalld handles persistence automatically with --permanent
-            firewall-cmd --permanent --add-rich-rule="rule family='ipv4' source address='$WAZUH_IP' port port='1514' protocol='tcp' accept" >/dev/null 2>&1
-            firewall-cmd --permanent --add-rich-rule="rule family='ipv4' source address='$WAZUH_IP' port port='1515' protocol='tcp' accept" >/dev/null 2>&1
+            firewall-cmd --permanent --add-rich-rule="rule family='ipv4' source address='$WAZUH_IP' port port='$WAZUH_PORT' protocol='tcp' accept" >/dev/null 2>&1
+            firewall-cmd --permanent --add-rich-rule="rule family='ipv4' source address='$WAZUH_IP' port port='$WAZUH_REG_PORT' protocol='tcp' accept" >/dev/null 2>&1
             firewall-cmd --reload >/dev/null 2>&1
             
         elif [[ "$FIREWALL_BACKEND" == "nftables" ]]; then
             # 1. Insert rule in memory (Immediate effect)
-            nft insert rule inet syswarden_table input ip saddr "$WAZUH_IP" tcp sport { 1514, 1515 } accept >/dev/null 2>&1
+            nft insert rule inet syswarden_table input ip saddr "$WAZUH_IP" tcp sport { $WAZUH_PORT, $WAZUH_REG_PORT } accept >/dev/null 2>&1
             
             # 2. SAVE rules to disk (Persistence for Debian/Ubuntu)
-            # This exports the current memory state to the config file
             log "INFO" "Saving Nftables rules to disk..."
             nft list ruleset > /etc/nftables.conf
             
@@ -891,9 +929,9 @@ setup_wazuh_agent() {
             
         elif [[ "$FIREWALL_BACKEND" == "ipset" ]] || command -v iptables >/dev/null; then
             # Insert rule
-            iptables -I INPUT 1 -s "$WAZUH_IP" -p tcp -m multiport --sports 1514,1515 -j ACCEPT
+            iptables -I INPUT 1 -s "$WAZUH_IP" -p tcp -m multiport --sports $WAZUH_PORT,$WAZUH_REG_PORT -j ACCEPT
             
-            # Persistence for IPtables (Debian/Ubuntu usually uses iptables-persistent)
+            # Persistence for IPtables
             if command -v netfilter-persistent >/dev/null; then
                 netfilter-persistent save >/dev/null 2>&1
             elif [[ -f /etc/iptables/rules.v4 ]]; then
@@ -901,43 +939,32 @@ setup_wazuh_agent() {
             fi
         fi
         
-        # Optional: Agent Name (Defaults to Hostname)
+        # Optional: Agent Name & Group
         read -p "Enter Agent Name [Default: $(hostname)]: " WAZUH_NAME
         WAZUH_NAME=${WAZUH_NAME:-$(hostname)}
         
-        # Optional: Agent Group (Defaults to 'default')
         read -p "Enter Agent Group [Default: default]: " WAZUH_GROUP
         WAZUH_GROUP=${WAZUH_GROUP:-default}
 
-        log "INFO" "Preparing to install Wazuh Agent linked to $WAZUH_IP..."
+        log "INFO" "Preparing to install Wazuh Agent linked to $WAZUH_IP ($WAZUH_PORT)..."
 
         # 2. Repository Setup & Installation based on OS
         if [[ -f /etc/debian_version ]]; then
             # --- DEBIAN / UBUNTU ---
             log "INFO" "Setting up APT repository for Wazuh..."
-            
-            # Install prerequisites
             apt-get install -y gnupg apt-transport-https
-
-            # Import GPG Key (Wazuh Official Method)
             curl -s https://packages.wazuh.com/key/GPG-KEY-WAZUH | gpg --no-default-keyring --keyring gnupg-ring:/usr/share/keyrings/wazuh.gpg --import && chmod 644 /usr/share/keyrings/wazuh.gpg
-            
-            # Add Repository
             echo "deb [signed-by=/usr/share/keyrings/wazuh.gpg] https://packages.wazuh.com/4.x/apt/ stable main" | tee /etc/apt/sources.list.d/wazuh.list
             apt-get update -qq
-
-            # Install Agent with Environment Variables (Auto-Config)
+            
             log "INFO" "Installing Wazuh Agent package..."
+            # Note: We configure ports via sed AFTER install to be sure
             WAZUH_MANAGER="$WAZUH_IP" WAZUH_AGENT_NAME="$WAZUH_NAME" WAZUH_AGENT_GROUP="$WAZUH_GROUP" apt-get install -y wazuh-agent
 
         elif [[ -f /etc/redhat-release ]]; then
             # --- RHEL / ALMA / ROCKY ---
             log "INFO" "Setting up YUM/DNF repository for Wazuh..."
-            
-            # Import GPG Key
             rpm --import https://packages.wazuh.com/key/GPG-KEY-WAZUH
-            
-            # Create Repo File
             cat <<EOF > /etc/yum.repos.d/wazuh.repo
 [wazuh]
 gpgcheck=1
@@ -947,13 +974,24 @@ name=EL-\$releasever - Wazuh
 baseurl=https://packages.wazuh.com/4.x/yum/
 priority=1
 EOF
-            # Install Agent with Environment Variables (Auto-Config)
             log "INFO" "Installing Wazuh Agent package..."
             WAZUH_MANAGER="$WAZUH_IP" WAZUH_AGENT_NAME="$WAZUH_NAME" WAZUH_AGENT_GROUP="$WAZUH_GROUP" dnf install -y wazuh-agent
-        
         else
             log "ERROR" "Unsupported OS for automatic Wazuh install."
             return
+        fi
+
+        # [NEW] Apply Custom Ports Configuration
+        if [[ "$WAZUH_PORT" != "1514" ]]; then
+             log "INFO" "Applying custom Connection Port: $WAZUH_PORT"
+             sed -i "s/<port>1514<\/port>/<port>$WAZUH_PORT<\/port>/" /var/ossec/etc/ossec.conf
+        fi
+        
+        if [[ "$WAZUH_REG_PORT" != "1515" ]]; then
+             log "INFO" "Applying custom Enrollment Port: $WAZUH_REG_PORT"
+             # If enrollment tag doesn't exist, we might need to insert it, 
+             # but usually sed works on default config structure.
+             sed -i "s/<port>1515<\/port>/<port>$WAZUH_REG_PORT<\/port>/" /var/ossec/etc/ossec.conf
         fi
 
         # 3. Service Startup
@@ -961,13 +999,19 @@ EOF
         systemctl daemon-reload
         systemctl enable wazuh-agent
         systemctl start wazuh-agent
+		
+		# --- [NEW] Persistence for Uninstallation ---
+        log "INFO" "Saving Wazuh configuration for future removal..."
+        echo "WAZUH_IP='$WAZUH_IP'" >> "$CONF_FILE"
+        echo "WAZUH_PORT='$WAZUH_PORT'" >> "$CONF_FILE"
+        echo "WAZUH_REG_PORT='$WAZUH_REG_PORT'" >> "$CONF_FILE"
 
         # 4. Final Status Check
         if systemctl is-active --quiet wazuh-agent; then
             log "INFO" "Wazuh Agent is RUNNING."
-            echo -e "${GREEN}SUCCESS: Wazuh Agent installed and connected to $WAZUH_IP (Group: $WAZUH_GROUP).${NC}"
+            echo -e "${GREEN}SUCCESS: Wazuh Agent installed ($WAZUH_IP:$WAZUH_PORT).${NC}"
         else
-            log "WARN" "Wazuh Agent installed but service failed to start. Check logs: journalctl -u wazuh-agent"
+            log "WARN" "Wazuh Agent installed but service failed to start. Check logs."
         fi
 
     else
