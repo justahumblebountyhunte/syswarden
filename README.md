@@ -166,22 +166,22 @@ journalctl -k -f | grep "SysWarden-BLOCK"
 ```
 📂 / (Root System)
 ├── 📁 etc/
-│   ├── 📄 syswarden.conf           # Main Configuration (Auto-generated)
+│   ├── 📄 syswarden.conf             # Main Configuration (Auto-generated)
 │   ├── 📁 fail2ban/
-│   │   └── 📄 jail.local           # Custom Jails (SSH, Web, DB) injected by SysWarden
+│   │   └── 📄 jail.local             # Custom Jails (SSH, Web, DB) injected by SysWarden
 │   ├── 📁 cron.d/
-│   │   └── 📄 syswarden-update     # Hourly Update Job
+│   │   └── 📄 syswarden-update       # Hourly Update Job
 │   └── 📁 systemd/system/
 │       └── 📄 syswarden-reporter.service
 ├── 📁 usr/local/bin/
-│   ├── 📜 install-syswarden.sh     # Main Script (CLI Tool)
-│   └── 🐍 syswarden_reporter.py    # Python Log Analyzer
+│   ├── 📜 install-syswarden.sh       # Main Script (CLI Tool)
+│   └── 🐍 syswarden_reporter.py      # Python Log Analyzer
 └── 📁 var/
     ├── 📁 log/
-    │   ├── 📄 syswarden-install.log # Installation & Debug Logs
-    │   └── 📄 fail2ban.log          # Banned IPs logs
+    │   ├── 📄 syswarden-install.log  # Installation & Debug Logs
+    │   └── 📄 fail2ban.log           # Banned IPs logs
     └── 📁 ossec/etc/
-        └── 📄 ossec.conf            # Wazuh Agent Config (Manager IP & Ports injected here)
+        └── 📄 ossec.conf             # Wazuh Agent Config (Manager IP & Ports injected here)
 ```
 
 ## Uninstallation (root)
