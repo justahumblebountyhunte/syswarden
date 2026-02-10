@@ -87,33 +87,6 @@ SysWarden is a tool based on the **[Data-Shield IPv4 Blocklists Community](https
 ## Technical Deep Dive: Integration Logic
 > Many admins worry that installing a massive blocklist might conflict with Fail2ban. **SysWarden solves this via layering.**
 
-### 1. The Nftables + Fail2ban Synergy (Debian/Ubuntu)
-
-- **Data-Shield (Layer 1):** Creates a high-performance Nftables `set` containing ~100k IPs. This acts as a static shield, dropping known bad actors instantly using extremely efficient kernel-level lookups.
-- **Fail2ban (Layer 2):** Continues to monitor logs for *new*, unknown attackers.
-- **Result:** Fail2ban uses less CPU because Data-Shield filters out the "background noise" (99% of automated scans) before Fail2ban even has to parse a log line.
-
-### 2. The Firewalld + Fail2ban Synergy (RHEL/Alma/Rocky)
-
-On Enterprise Linux, proper integration with `firewalld` is critical.
-
-- **Native Sets:** SysWarden creates a permanent `ipset` type within Firewalld's configuration logic.
-- **Rich Rules:** It applies a "Rich Rule" that drops traffic from this set *before* it reaches your zones or services.
-- **Persistence:** Unlike simple scripts that run `ipset` commands (which vanish on reload), SysWarden writes the configuration to `/etc/firewalld/`, ensuring the protection persists across service reloads and server reboots.
-
-### 3. AbuseIPDB reporting
-> In a community setting, during the script installation phase, it is possible to report triggered and confirmed alerts to ABUSEIPDB in order to keep the database of malicious IP addresses up to date.
-
-- **Enable the option** Simply confirm with `y` when prompted during installation.
-- **API key** Paste your AbuseIPDB API key to automatically report malicious IPs and contribute to the community database.
-
-### 4. Wazuh Agent Integration
-> For organizations using a SIEM, SysWarden includes an interactive module to deploy the **Wazuh XDR Agent** effortlessly, bridging local protection with centralized monitoring.
-
-- **Seamless Deployment:** The script automatically detects your OS, installs the official GPG keys/repositories, and deploys the latest agent version.
-- **Smart Configuration:** By simply providing your Manager IP, Agent Name, and Group during the prompt, the script injects the configuration immediately—no manual editing of `ossec.conf` required.
-- **Auto-Whitelisting:** To ensure uninterrupted log forwarding, SysWarden creates a high-priority exception rule allowing traffic to/from your Wazuh Manager (ports 1514/1515) to bypass the strict blocklist.
-
 ## Workflow
 
 ```
@@ -141,6 +114,33 @@ On Enterprise Linux, proper integration with `firewalld` is critical.
             ├── 🔍 Watch: File Integrity & System Events
             └── 📨 Action: Forward alerts to Wazuh SIEM
 ```
+
+### 1. The Nftables + Fail2ban Synergy (Debian/Ubuntu)
+
+- **Data-Shield (Layer 1):** Creates a high-performance Nftables `set` containing ~100k IPs. This acts as a static shield, dropping known bad actors instantly using extremely efficient kernel-level lookups.
+- **Fail2ban (Layer 2):** Continues to monitor logs for *new*, unknown attackers.
+- **Result:** Fail2ban uses less CPU because Data-Shield filters out the "background noise" (99% of automated scans) before Fail2ban even has to parse a log line.
+
+### 2. The Firewalld + Fail2ban Synergy (RHEL/Alma/Rocky)
+
+On Enterprise Linux, proper integration with `firewalld` is critical.
+
+- **Native Sets:** SysWarden creates a permanent `ipset` type within Firewalld's configuration logic.
+- **Rich Rules:** It applies a "Rich Rule" that drops traffic from this set *before* it reaches your zones or services.
+- **Persistence:** Unlike simple scripts that run `ipset` commands (which vanish on reload), SysWarden writes the configuration to `/etc/firewalld/`, ensuring the protection persists across service reloads and server reboots.
+
+### 3. AbuseIPDB reporting
+> In a community setting, during the script installation phase, it is possible to report triggered and confirmed alerts to ABUSEIPDB in order to keep the database of malicious IP addresses up to date.
+
+- **Enable the option** Simply confirm with `y` when prompted during installation.
+- **API key** Paste your AbuseIPDB API key to automatically report malicious IPs and contribute to the community database.
+
+### 4. Wazuh Agent Integration
+> For organizations using a SIEM, SysWarden includes an interactive module to deploy the **Wazuh XDR Agent** effortlessly, bridging local protection with centralized monitoring.
+
+- **Seamless Deployment:** The script automatically detects your OS, installs the official GPG keys/repositories, and deploys the latest agent version.
+- **Smart Configuration:** By simply providing your Manager IP, Agent Name, and Group during the prompt, the script injects the configuration immediately—no manual editing of `ossec.conf` required.
+- **Auto-Whitelisting:** To ensure uninterrupted log forwarding, SysWarden creates a high-priority exception rule allowing traffic to/from your Wazuh Manager (ports 1514/1515) to bypass the strict blocklist.
 
 ## How to Install (root)
 
