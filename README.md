@@ -83,6 +83,13 @@ On Enterprise Linux, proper integration with `firewalld` is critical.
 - **Enable the option** Simply confirm with `y` when prompted during installation.
 - **API key** Paste your AbuseIPDB API key to automatically report malicious IPs and contribute to the community database.
 
+### 4. Wazuh Agent Integration
+> For organizations using a SIEM, SysWarden includes an interactive module to deploy the **Wazuh XDR Agent** effortlessly, bridging local protection with centralized monitoring.
+
+- **Seamless Deployment:** The script automatically detects your OS, installs the official GPG keys/repositories, and deploys the latest agent version.
+- **Smart Configuration:** By simply providing your Manager IP, Agent Name, and Group during the prompt, the script injects the configuration immediately—no manual editing of `ossec.conf` required.
+- **Auto-Whitelisting:** To ensure uninterrupted log forwarding, SysWarden creates a high-priority exception rule allowing traffic to/from your Wazuh Manager (ports 1514/1515) to bypass the strict blocklist.
+
 ## How to Install (root)
 
 ```bash
