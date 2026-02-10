@@ -823,8 +823,8 @@ uninstall_syswarden() {
         # Remove the main Blocklist Rule
         firewall-cmd --permanent --remove-rich-rule="rule source ipset='$SET_NAME' log prefix='[SysWarden-BLOCK] ' level='info' drop" 2>/dev/null || true
         
-        # Remove Wazuh Whitelist (Only if we know the IP)
-        if [[ -n "$WAZUH_IP" ]]; then
+        # [FIX] Safe check for Wazuh IP (Avoids crash if variable is unbound)
+        if [[ -n "${WAZUH_IP:-}" ]]; then
             # Default ports if config file didn't save them (backward compatibility)
             local w_port=${WAZUH_PORT:-1514}
             local w_reg=${WAZUH_REG_PORT:-1515}
@@ -845,8 +845,8 @@ uninstall_syswarden() {
         iptables -D INPUT -m set --match-set "$SET_NAME" src -j DROP 2>/dev/null || true
         iptables -D INPUT -m set --match-set "$SET_NAME" src -j LOG --log-prefix "[SysWarden-BLOCK] " 2>/dev/null || true
         
-        # Remove Wazuh Whitelist (Only if we know the IP)
-        if [[ -n "$WAZUH_IP" ]]; then
+        # [FIX] Safe check for Wazuh IP
+        if [[ -n "${WAZUH_IP:-}" ]]; then
             local w_port=${WAZUH_PORT:-1514}
             local w_reg=${WAZUH_REG_PORT:-1515}
             iptables -D INPUT -s "$WAZUH_IP" -p tcp -m multiport --sports $w_port,$w_reg -j ACCEPT 2>/dev/null || true
