@@ -35,6 +35,19 @@
 
 SysWarden is a tool based on the **[Data-Shield IPv4 Blocklists Community](https://github.com/duggytuxy/Data-Shield_IPv4_Blocklist)**, **[Wazuh](https://github.com/wazuh)** and **[Fail2ban](https://github.com/fail2ban/fail2ban)** that blocks up to 99% of noisy, disruptive, and malicious IP addresses and focuses on real signals.
 
+## What Does SysWarden Protect?
+
+SysWarden acts as an advanced, preemptive shield for your infrastructure. By dropping known malicious traffic at the firewall (kernel) level **before** it even reaches your applications, it provides a crucial extra layer of security for any exposed asset.
+
+- It is highly recommended for securing:
+  - **Public VPS & Dedicated Servers:** Protect your SSH ports, control panels, and core system services from relentless brute-force attacks and automated mass-scanning.
+  - **Websites & CMS (WordPress, Magento, etc.):** Block bad bots, vulnerability scanners, and exploit attempts targeting your web servers (Nginx/Apache) before they consume your CPU and RAM.
+  - **Public APIs & SaaS Platforms:** Keep your application resources dedicated to legitimate users. Prevent endpoint abuse, scrapers, and Layer 7 DDoS probes.
+  - **Critical Infrastructure:** Add a robust perimeter defense for your business-critical applications and internal tools exposed to the internet.
+  - **Databases (MySQL, MongoDB, PostgreSQL):** Shield your exposed or partially exposed data stores from credential stuffing, unauthorized access attempts, and ransomware gangs.
+
+> By eliminating the "background noise" of the internet, SysWarden ensures your servers remain fast, clean, and focused on serving real humans.
+
 ## Architecture
 
 ```
