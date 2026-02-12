@@ -167,6 +167,7 @@ On Enterprise Linux, proper integration with `firewalld` is critical.
 - **Auto-Whitelisting:** To ensure uninterrupted log forwarding, SysWarden creates a high-priority exception rule allowing traffic to/from your Wazuh Manager (ports 1514/1515) to bypass the strict blocklist.
 
 ## How to Install (root)
+> This script automatically detects installed services (Nginx, Apache, MongoDB) and configures protections accordingly. If a service is installed AFTER SysWarden, simply run the update command or rerun the installer to activate the new jails.
 
 ```bash
 # For Ubuntu/Debian
