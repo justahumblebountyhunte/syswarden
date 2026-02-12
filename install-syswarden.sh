@@ -364,7 +364,7 @@ EOF
         # 3. HEADER & SSH (Always Active)
         cat <<EOF > /etc/fail2ban/jail.local
 [DEFAULT]
-bantime = 1h
+bantime = 4h
 bantime.increment = true
 findtime = 10m
 maxretry = 3
@@ -478,16 +478,20 @@ setup_abuse_reporting() {
             return
         fi
 
-        # [HYBRID REPORTING MODE]
-        # 1. Fail2ban Native Reporting (Cleaner, Faster, Reliable)
-        log "INFO" "Configuring Fail2ban native reporting..."
-        
-        cp /etc/fail2ban/jail.local "$TMP_DIR/jail.local.tmp"
-        
-        cat <<EOF > /etc/fail2ban/jail.local
+        # --- SUB-CHOICE 1: FAIL2BAN (App Layer) ---
+        echo ""
+        read -p "Report Fail2ban Bans (SSH/Web brute-force)? [Y/n]: " REPORT_F2B
+        REPORT_F2B=${REPORT_F2B:-y}
+
+        if [[ "$REPORT_F2B" =~ ^[Yy]$ ]]; then
+            log "INFO" "Configuring Fail2ban native reporting..."
+            
+            cp /etc/fail2ban/jail.local "$TMP_DIR/jail.local.tmp"
+            
+            cat <<EOF > /etc/fail2ban/jail.local
 [DEFAULT]
 # --- REGLAGES DE BASE ---
-bantime = 1h
+bantime = 4h
 bantime.increment = true
 findtime = 10m
 maxretry = 3
@@ -499,18 +503,27 @@ banaction = firewallcmd-ipset
 
 # Config AbuseIPDB
 action = %(banaction)s[name=%(__name__)s, bantime="%(bantime)s", port="%(port)s", protocol="%(protocol)s", chain="%(chain)s"]
-         abuseipdb[abuseipdb_apikey="$USER_API_KEY", abuseipdb_category="18,21"]
+          abuseipdb[abuseipdb_apikey="$USER_API_KEY", abuseipdb_category="18,21"]
 
 # --- JAILS ---
 EOF
-        # Append existing jails (skipping the old default header)
-        sed -n '/^\[sshd\]/,$p' "$TMP_DIR/jail.local.tmp" >> /etc/fail2ban/jail.local
-        systemctl restart fail2ban
+            # Append existing jails
+            sed -n '/^\[sshd\]/,$p' "$TMP_DIR/jail.local.tmp" >> /etc/fail2ban/jail.local
+            systemctl restart fail2ban
+        else
+            log "INFO" "Skipping Fail2ban reporting configuration."
+            # Note: We keep the jail.local generated in configure_fail2ban() which has no reporting action.
+        fi
 
-        # 2. Python Reporting for FIREWALL DROPS ONLY
-        log "INFO" "Installing Python reporter for Firewall Drops..."
-        
-        cat <<'EOF' > /usr/local/bin/syswarden_reporter.py
+        # --- SUB-CHOICE 2: FIREWALL (Network Layer) ---
+        echo ""
+        read -p "Report Firewall Drops (Port Scans/Blacklist)? [Y/n]: " REPORT_FW
+        REPORT_FW=${REPORT_FW:-y}
+
+        if [[ "$REPORT_FW" =~ ^[Yy]$ ]]; then
+            log "INFO" "Installing Python reporter for Firewall Drops..."
+            
+            cat <<'EOF' > /usr/local/bin/syswarden_reporter.py
 #!/usr/bin/env python3
 import subprocess
 import select
@@ -588,11 +601,11 @@ if __name__ == "__main__":
     monitor_logs()
 EOF
 
-        sed -i "s/PLACEHOLDER_KEY/$USER_API_KEY/" /usr/local/bin/syswarden_reporter.py
-        chmod +x /usr/local/bin/syswarden_reporter.py
+            sed -i "s/PLACEHOLDER_KEY/$USER_API_KEY/" /usr/local/bin/syswarden_reporter.py
+            chmod +x /usr/local/bin/syswarden_reporter.py
 
-        log "INFO" "Creating systemd service for Reporter..."
-        cat <<EOF > /etc/systemd/system/syswarden-reporter.service
+            log "INFO" "Creating systemd service for Reporter..."
+            cat <<EOF > /etc/systemd/system/syswarden-reporter.service
 [Unit]
 Description=SysWarden Firewall Reporter
 After=network.target
@@ -607,9 +620,12 @@ ProtectSystem=full
 [Install]
 WantedBy=multi-user.target
 EOF
-        systemctl daemon-reload
-        systemctl enable --now syswarden-reporter
-        log "INFO" "AbuseIPDB Reporter is ACTIVE (Hybrid Mode)."
+            systemctl daemon-reload
+            systemctl enable --now syswarden-reporter
+            log "INFO" "AbuseIPDB Reporter (Firewall) is ACTIVE."
+        else
+            log "INFO" "Skipping Firewall reporting configuration."
+        fi
         
     else
         log "INFO" "Skipping AbuseIPDB reporting setup."
