@@ -349,6 +349,13 @@ configure_fail2ban() {
     # [UNIVERSAL MODE] Configures services ONLY if they exist to prevent crashes
     if command -v fail2ban-client >/dev/null; then
         log "INFO" "Generating Fail2ban configuration (Universal Mode)..."
+		
+		# --- Add backup Fai2ban jail ---
+        if [[ -f /etc/fail2ban/jail.local ]] && [[ ! -f /etc/fail2ban/jail.local.bak ]]; then
+            log "INFO" "Creating backup of existing jail.local"
+            cp /etc/fail2ban/jail.local /etc/fail2ban/jail.local.bak
+        fi
+        # -------------------------------------------------------
 
         # 1. Syslog requirement
         cat <<EOF > /etc/fail2ban/fail2ban.local
