@@ -861,6 +861,7 @@ maxretry = 5
 bantime  = 24h
 EOF
         fi
+    fi 
 }
 
 setup_abuse_reporting() {
