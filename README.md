@@ -180,9 +180,12 @@ dnf install wget -y
 
 # install script
 cd /usr/local/bin/
-wget https://github.com/duggytuxy/syswarden/releases/download/v2.10/install-syswarden.sh
+wget https://github.com/duggytuxy/syswarden/releases/download/v3.00/install-syswarden.sh
 chmod +x install-syswarden.sh
 ./install-syswarden.sh
+
+# Update configurations and Blocklists
+./install-syswarden.sh update
 
 # Check Kernel Logs
 journalctl -k -f | grep "SysWarden-BLOCK"
