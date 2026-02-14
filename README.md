@@ -189,6 +189,12 @@ chmod +x install-syswarden.sh
 
 # Check Kernel Logs
 journalctl -k -f | grep "SysWarden-BLOCK"
+
+# Whitelist an IP
+./install-syswarden whitelist
+
+# Block an IP
+./install-syswarden blocklist
 ```
 
 ```
