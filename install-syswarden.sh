@@ -1691,10 +1691,14 @@ fi
 check_root
 detect_os_backend
 
+if [[ "$MODE" == "update" ]] && [[ -f "$CONF_FILE" ]]; then
+    source "$CONF_FILE"
+fi
+
 if [[ "$MODE" != "update" ]]; then
     install_dependencies
     define_ssh_port "$MODE"
-	define_docker_integration "$MODE"
+    define_docker_integration "$MODE"
     configure_fail2ban
 fi
 
