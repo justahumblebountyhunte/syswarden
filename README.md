@@ -200,7 +200,10 @@ journalctl -k -f | grep "SysWarden-BLOCK"
 ./install-syswarden.sh blocklist
 
 # Docker protection
-./install-syswarden protect-docker
+./install-syswarden.sh protect-docker
+
+# SysWarden Upgrade Checker
+././install-syswarden.sh upgrade
 ```
 
 ```
