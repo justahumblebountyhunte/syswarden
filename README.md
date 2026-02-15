@@ -198,6 +198,9 @@ journalctl -k -f | grep "SysWarden-BLOCK"
 
 # Block an IP
 ./install-syswarden.sh blocklist
+
+# Docker protection
+./install-syswarden protect-docker
 ```
 
 ```
