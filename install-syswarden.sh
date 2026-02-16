@@ -1026,6 +1026,8 @@ def send_report(ip, categories, comment):
             print(f"[SUCCESS] Reported {ip} -> Cats [{categories}]")
             reported_cache[ip] = current_time 
             clean_cache()
+        else:
+            print(f"[API ERROR] HTTP {response.status_code} : {response.text}")
     except Exception as e:
         print(f"[FAIL] Error: {e}")
 
