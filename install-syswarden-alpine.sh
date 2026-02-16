@@ -438,8 +438,8 @@ def monitor_logs():
                     cats = ["14"]
                     attack_type = "Port Scan"
 
-                    if port in [80, 443]: cats.extend(["20", "21"]); attack_type = "Web Attack"
-                    elif port in [22, 2222]: cats.extend(["18", "22"]); attack_type = "SSH Attack"
+                    if port in [80, 443, 4443, 8080, 8443]: cats.extend(["20", "21"]); attack_type = "Web Attack"
+                    elif port in [22, 2222, 22222]: cats.extend(["18", "22"]); attack_type = "SSH Attack"
                     elif port == 23: cats.extend(["18", "23"]); attack_type = "Telnet IoT"
                     elif port == 445: cats.extend(["15", "18"]); attack_type = "SMB"
                     elif port == 1433: cats.extend(["18", "15"]); attack_type = "MSSQL"
