@@ -365,6 +365,7 @@ import re
 import requests
 import time
 import os
+import ipaddress
 
 # --- CONFIGURATION ---
 API_KEY = "PLACEHOLDER_KEY"
@@ -377,6 +378,14 @@ reported_cache = {}
 
 def send_report(ip, categories, comment):
     current_time = time.time()
+    
+    # --- Validation stricte de l'IP ---
+    try:
+        ipaddress.ip_address(ip)
+    except ValueError:
+        print(f"[SKIP] Invalid IP detected by Regex: '{ip}'", flush=True)
+        return
+
     if ip in reported_cache:
         if current_time - reported_cache[ip] < REPORT_INTERVAL:
             return 
@@ -388,11 +397,13 @@ def send_report(ip, categories, comment):
     try:
         response = requests.post(url, params=params, headers=headers)
         if response.status_code == 200:
-            print(f"[SUCCESS] Reported {ip} -> Cats [{categories}]")
+            print(f"[SUCCESS] Reported {ip} -> Cats [{categories}]", flush=True)
             reported_cache[ip] = current_time 
             clean_cache()
+        else:
+            print(f"[API ERROR] HTTP {response.status_code} : {response.text}", flush=True)
     except Exception as e:
-        print(f"[FAIL] Error: {e}")
+        print(f"[FAIL] Error: {e}", flush=True)
 
 def clean_cache():
     current_time = time.time()
@@ -401,7 +412,7 @@ def clean_cache():
         del reported_cache[ip]
 
 def monitor_logs():
-    print("🚀 Monitoring logs (Alpine SysWarden Reporter)...")
+    print("🚀 Monitoring logs (Alpine SysWarden Reporter)...", flush=True)
     
     # Files to watch on Alpine
     files_to_watch = []
@@ -409,7 +420,7 @@ def monitor_logs():
     if os.path.exists("/var/log/fail2ban.log"): files_to_watch.append("/var/log/fail2ban.log")
     
     if not files_to_watch:
-        print("[FAIL] No log files found to monitor.")
+        print("[FAIL] No log files found to monitor.", flush=True)
         return
 
     cmd = ['tail', '-F'] + files_to_watch
