@@ -1086,6 +1086,13 @@ def monitor_logs():
                     elif port == 3000: cats.extend(["15", "20"]); attack_type = "Possible Vulns Exploit"
                     elif port == 4444: cats.extend(["15", "20"]); attack_type = "Possible C2 Host"
                     elif port in [3389, 5900]: cats.extend(["18"]); attack_type = "RDP/VNC Attack"
+                    elif port == 21: cats.extend(["5", "18"]); attack_type = "FTP Attack"
+                    elif port in [25, 110, 143, 465, 587, 993, 995]: cats.extend(["18"]); attack_type = "Mail Service Attack"
+                    elif port in [1080, 3128, 8118]: cats.extend(["9", "15"]); attack_type = "Open Proxy Probe"
+                    elif port in [2375, 2376]: cats.extend(["15", "20"]); attack_type = "Docker API Attack"
+                    elif port in [3306, 5432, 27017]: cats.extend(["15", "18"]); attack_type = "DB Attack (MySQL/PgSQL/Mongo)"
+                    elif port in [5060, 5061]: cats.extend(["8", "18"]); attack_type = "SIP/VoIP Attack"
+                    elif port in [6379, 9200, 11211]: cats.extend(["15", "20"]); attack_type = "NoSQL/Cache Attack"
 
                     send_report(ip, ",".join(cats), f"Blocked by SysWarden Firewall ({attack_type} Port {port})")
                     continue
