@@ -180,7 +180,7 @@ dnf install wget -y
 
 # install script
 cd /usr/local/bin/
-wget https://github.com/duggytuxy/syswarden/releases/download/v3.00/install-syswarden.sh
+wget https://github.com/duggytuxy/syswarden/releases/download/v4.00/install-syswarden.sh
 chmod +x install-syswarden.sh
 ./install-syswarden.sh
 
@@ -189,9 +189,6 @@ chmod +x install-syswarden.sh
 
 # View Alerts
 ./install-syswarden.sh alerts
-
-# Check Kernel Logs
-journalctl -k -f | grep "SysWarden-BLOCK"
 
 # Whitelist an IP
 ./install-syswarden.sh whitelist
