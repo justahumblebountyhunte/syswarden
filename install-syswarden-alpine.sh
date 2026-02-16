@@ -23,6 +23,7 @@ LOG_FILE="/var/log/syswarden-install.log"
 CONF_FILE="/etc/syswarden.conf"
 SET_NAME="syswarden_blacklist"
 TMP_DIR=$(mktemp -d)
+VERSION="v4.00"
 
 # --- LIST URLS ---
 declare -A URLS_STANDARD
@@ -699,6 +700,56 @@ blocklist_ip() {
     esac
 }
 
+check_upgrade() {
+    echo -e "\n${BLUE}=== SysWarden Upgrade Checker (Alpine) ===${NC}"
+    log "INFO" "Checking for updates on GitHub API..."
+
+    local api_url="https://api.github.com/repos/duggytuxy/syswarden/releases/latest"
+    local response
+    
+    # Fetch API response quietly (Timeout 5s to avoid hanging)
+    response=$(curl -sS --connect-timeout 5 "$api_url") || {
+        log "ERROR" "Failed to connect to GitHub API."
+        exit 1
+    }
+
+    # Extract tag_name (e.g., "v3.00") using standard POSIX grep/cut
+    local latest_version
+    latest_version=$(echo "$response" | grep -o '"tag_name": "[^"]*"' | head -n 1 | cut -d'"' -f4)
+    
+    if [[ -z "$latest_version" ]]; then
+        log "ERROR" "Could not parse latest version from GitHub."
+        exit 1
+    fi
+
+    # Extract download URL specifically for the Alpine .sh script
+    local download_url
+    download_url=$(echo "$response" | grep -o '"browser_download_url": "[^"]*alpine\.sh"' | head -n 1 | cut -d'"' -f4)
+
+    echo -e "Current Version : ${YELLOW}${VERSION}${NC}"
+    echo -e "Latest Version  : ${GREEN}${latest_version}${NC}\n"
+
+    if [[ "$VERSION" == "$latest_version" ]]; then
+        echo -e "${GREEN}You are already using the latest version of SysWarden!${NC}"
+    else
+        echo -e "${YELLOW}A new version ($latest_version) is available!${NC}"
+        echo -e "To upgrade safely, please run the following commands:\n"
+        
+        # If the API returned a direct alpine .sh link, provide the wget shortcut
+        if [[ -n "$download_url" ]]; then
+            echo -e "  wget -qO install-syswarden-alpine.sh \"$download_url\""
+            echo -e "  chmod +x install-syswarden-alpine.sh"
+            echo -e "  ./install-syswarden-alpine.sh\n"
+        else
+            # Fallback to the main releases page if no specific alpine asset is found
+            echo -e "  Please download the new release manually from:"
+            echo -e "  https://github.com/duggytuxy/syswarden/releases/latest\n"
+        fi
+        
+        echo -e "Note: Running the updated script will cleanly overwrite old configurations if necessary."
+    fi
+}
+
 show_alerts_dashboard() {
     trap "tput cnorm; clear; exit 0" INT TERM
     tput civis
@@ -779,6 +830,12 @@ fi
 if [[ "$MODE" == "alerts" ]]; then
     check_root
     show_alerts_dashboard
+    exit 0
+fi
+
+if [[ "$MODE" == "upgrade" ]]; then
+    check_root
+    check_upgrade
     exit 0
 fi
 
