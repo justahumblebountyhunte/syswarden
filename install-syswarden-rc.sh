@@ -400,6 +400,13 @@ apply_firewall_rules() {
     if [[ "$FIREWALL_BACKEND" == "nftables" ]]; then
         log "INFO" "Configuring Nftables Set..."
         
+        # 1. Main Blocklist Elements (Conditional for Option 4 "No List")
+        local main_elements=""
+        if [[ -s "$FINAL_LIST" ]]; then
+            main_elements="elements = { $(awk '{print $1 ","}' "$FINAL_LIST") }"
+        fi
+        
+        # 2. GeoIP Blocklist Elements (Conditional)
         local geoip_block=""
         local geoip_rule=""
         if [[ "${GEOBLOCK_COUNTRIES:-none}" != "none" ]] && [[ -s "$GEOIP_FILE" ]]; then
@@ -413,13 +420,14 @@ apply_firewall_rules() {
             geoip_rule="ip saddr @$GEOIP_SET_NAME log prefix \"[SysWarden-GEO] \" flags all drop"
         fi
 
+        # 3. Build and Apply Nftables config
         cat <<EOF > "$TMP_DIR/syswarden.nft"
 table inet syswarden_table {
     set $SET_NAME {
         type ipv4_addr
         flags interval
         auto-merge
-        elements = { $(awk '{print $1 ","}' "$FINAL_LIST") }
+        $main_elements
     }$geoip_block
     chain input {
         type filter hook input priority filter - 10; policy accept;
