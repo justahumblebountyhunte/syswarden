@@ -1308,6 +1308,13 @@ ENABLE_FW = PLACEHOLDER_FW
 # --- DEFINITIONS ---
 reported_cache = {}
 
+def clean_cache():
+    current_time = time.time()
+    # Create a list of expired IPs to avoid modifying the dictionary during iteration
+    expired = [ip for ip, ts in reported_cache.items() if current_time - ts > REPORT_INTERVAL]
+    for ip in expired:
+        del reported_cache[ip]
+
 def send_report(ip, categories, comment):
     current_time = time.time()
     
