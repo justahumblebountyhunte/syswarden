@@ -627,6 +627,11 @@ EOF
         fi
 
         # 3. HEADER & SSH (Always Active)
+        local f2b_action="iptables-multiport"
+        if [[ "$FIREWALL_BACKEND" == "firewalld" ]]; then f2b_action="firewallcmd-ipset";
+        elif [[ "$FIREWALL_BACKEND" == "nftables" ]]; then f2b_action="nftables-multiport";
+        elif [[ "$FIREWALL_BACKEND" == "ufw" ]]; then f2b_action="ufw"; fi
+
         cat <<EOF > /etc/fail2ban/jail.local
 [DEFAULT]
 bantime = 4h
@@ -635,8 +640,8 @@ findtime = 10m
 maxretry = 3
 ignoreip = 127.0.0.1/8 ::1
 backend = systemd
-# Default Action (Will be overwritten if AbuseIPDB is enabled)
-banaction = firewallcmd-ipset
+# Default Action dynamically set based on OS backend
+banaction = $f2b_action
 
 # --- SSH Protection ---
 [sshd]
@@ -676,7 +681,7 @@ port    = http,https
 filter  = nginx-scanner
 logpath = /var/log/nginx/access.log
 backend = auto
-maxretry = 3
+maxretry = 15
 bantime  = 24h
 EOF
         fi
@@ -721,7 +726,7 @@ port    = http,https
 filter  = apache-scanner
 logpath = $APACHE_ACCESS
 backend = auto
-maxretry = 3
+maxretry = 15
 bantime  = 24h
 EOF
         fi
@@ -733,7 +738,7 @@ EOF
             # Create strict Filter for Auth failures & Unauthorized commands (Injection probing)
             # Catches: "Authentication failed", "SASL authentication failed", "unauthorized", "not authorized"
             if [[ ! -f "/etc/fail2ban/filter.d/mongodb-guard.conf" ]]; then
-                echo -e "[Definition]\nfailregex = ^.*(?:Authentication failed|SASL authentication \S+ failed|Command not found|unauthorized|not authorized).*\$\nignoreregex =" > /etc/fail2ban/filter.d/mongodb-guard.conf
+                echo -e "[Definition]\nfailregex = ^.*(?:Authentication failed|SASL authentication \S+ failed|Command not found|unauthorized|not authorized).* <HOST>(:[0-9]+)?.*\$\nignoreregex =" > /etc/fail2ban/filter.d/mongodb-guard.conf
             fi
 
             cat <<EOF >> /etc/fail2ban/jail.local
@@ -763,7 +768,7 @@ EOF
 
             # Create Filter for Authentication Failures (Access Denied brute-force)
             if [[ ! -f "/etc/fail2ban/filter.d/mariadb-auth.conf" ]]; then
-                echo -e "[Definition]\nfailregex = ^.*[Aa]ccess denied for user.*\$\nignoreregex =" > /etc/fail2ban/filter.d/mariadb-auth.conf
+                echo -e "[Definition]\nfailregex = ^.*[Aa]ccess denied for user .*@'<HOST>'.*\$\nignoreregex =" > /etc/fail2ban/filter.d/mariadb-auth.conf
             fi
 
             cat <<EOF >> /etc/fail2ban/jail.local
@@ -965,7 +970,7 @@ EOF
 
                 # Create Filter for Handshake Failures (Requires Kernel Logging)
                 if [[ ! -f "/etc/fail2ban/filter.d/wireguard.conf" ]]; then
-                    echo -e "[Definition]\nfailregex = ^.*wireguard: .* Handshake for peer .* did not complete.*\$\nignoreregex =" > /etc/fail2ban/filter.d/wireguard.conf
+                    echo -e "[Definition]\nfailregex = ^.*wireguard: .* Handshake for peer .* \\(<HOST>:[0-9]+\\) did not complete.*\$\nignoreregex =" > /etc/fail2ban/filter.d/wireguard.conf
                 fi
 
                 cat <<EOF >> /etc/fail2ban/jail.local
