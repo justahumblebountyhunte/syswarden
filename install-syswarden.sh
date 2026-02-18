@@ -550,13 +550,20 @@ EOF
 
         log "INFO" "Configuring Firewalld IPSet..."
         firewall-cmd --permanent --remove-rich-rule="rule source ipset='$SET_NAME' log prefix='[SysWarden-BLOCK] ' level='info' drop" 2>/dev/null || true
-        firewall-cmd --reload
         firewall-cmd --permanent --delete-ipset="$SET_NAME" 2>/dev/null || true
-        firewall-cmd --reload
-        firewall-cmd --permanent --new-ipset="$SET_NAME" --type=hash:net --option=family=inet --option=maxelem=200000
-        firewall-cmd --reload
         
-        firewall-cmd --permanent --ipset="$SET_NAME" --add-entries-from-file="$FINAL_LIST"
+        # Bypass DBus timeouts by generating the XML directly
+        mkdir -p /etc/firewalld/ipsets
+        cat <<EOF > "/etc/firewalld/ipsets/${SET_NAME}.xml"
+<?xml version="1.0" encoding="utf-8"?>
+<ipset type="hash:net">
+  <option name="family" value="inet"/>
+  <option name="maxelem" value="200000"/>
+EOF
+        sed 's/.*/  <entry>&<\/entry>/' "$FINAL_LIST" >> "/etc/firewalld/ipsets/${SET_NAME}.xml"
+        echo "</ipset>" >> "/etc/firewalld/ipsets/${SET_NAME}.xml"
+        
+        firewall-cmd --reload
         firewall-cmd --permanent --add-rich-rule="rule source ipset='$SET_NAME' log prefix='[SysWarden-BLOCK] ' level='info' drop"
         
         for port in 23 445 1433 3389 5900; do
@@ -568,8 +575,17 @@ EOF
             log "INFO" "Configuring Firewalld GeoIP Set..."
             firewall-cmd --permanent --remove-rich-rule="rule source ipset='$GEOIP_SET_NAME' log prefix='[SysWarden-GEO] ' level='info' drop" 2>/dev/null || true
             firewall-cmd --permanent --delete-ipset="$GEOIP_SET_NAME" 2>/dev/null || true
-            firewall-cmd --permanent --new-ipset="$GEOIP_SET_NAME" --type=hash:net --option=family=inet --option=maxelem=500000
-            firewall-cmd --permanent --ipset="$GEOIP_SET_NAME" --add-entries-from-file="$GEOIP_FILE"
+            
+            cat <<EOF > "/etc/firewalld/ipsets/${GEOIP_SET_NAME}.xml"
+<?xml version="1.0" encoding="utf-8"?>
+<ipset type="hash:net">
+  <option name="family" value="inet"/>
+  <option name="maxelem" value="500000"/>
+EOF
+            sed 's/.*/  <entry>&<\/entry>/' "$GEOIP_FILE" >> "/etc/firewalld/ipsets/${GEOIP_SET_NAME}.xml"
+            echo "</ipset>" >> "/etc/firewalld/ipsets/${GEOIP_SET_NAME}.xml"
+            
+            firewall-cmd --reload
             firewall-cmd --permanent --add-rich-rule="rule source ipset='$GEOIP_SET_NAME' log prefix='[SysWarden-GEO] ' level='info' drop"
         fi
 
@@ -578,8 +594,17 @@ EOF
             log "INFO" "Configuring Firewalld ASN Set..."
             firewall-cmd --permanent --remove-rich-rule="rule source ipset='$ASN_SET_NAME' log prefix='[SysWarden-ASN] ' level='info' drop" 2>/dev/null || true
             firewall-cmd --permanent --delete-ipset="$ASN_SET_NAME" 2>/dev/null || true
-            firewall-cmd --permanent --new-ipset="$ASN_SET_NAME" --type=hash:net --option=family=inet --option=maxelem=500000
-            firewall-cmd --permanent --ipset="$ASN_SET_NAME" --add-entries-from-file="$ASN_FILE"
+            
+            cat <<EOF > "/etc/firewalld/ipsets/${ASN_SET_NAME}.xml"
+<?xml version="1.0" encoding="utf-8"?>
+<ipset type="hash:net">
+  <option name="family" value="inet"/>
+  <option name="maxelem" value="500000"/>
+EOF
+            sed 's/.*/  <entry>&<\/entry>/' "$ASN_FILE" >> "/etc/firewalld/ipsets/${ASN_SET_NAME}.xml"
+            echo "</ipset>" >> "/etc/firewalld/ipsets/${ASN_SET_NAME}.xml"
+            
+            firewall-cmd --reload
             firewall-cmd --permanent --add-rich-rule="rule source ipset='$ASN_SET_NAME' log prefix='[SysWarden-ASN] ' level='info' drop"
         fi
         
