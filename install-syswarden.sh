@@ -22,6 +22,8 @@ WHITELIST_FILE="$SYSWARDEN_DIR/whitelist.txt"
 BLOCKLIST_FILE="$SYSWARDEN_DIR/blocklist.txt"
 GEOIP_SET_NAME="syswarden_geoip"
 GEOIP_FILE="$SYSWARDEN_DIR/geoip.txt"
+ASN_SET_NAME="syswarden_asn"
+ASN_FILE="$SYSWARDEN_DIR/asn.txt"
 
 # --- LIST URLS ---
 declare -A URLS_STANDARD
@@ -99,6 +101,7 @@ install_dependencies() {
 
     if ! command -v curl >/dev/null; then missing_common="$missing_common curl"; fi
     if ! command -v python3 >/dev/null; then missing_common="$missing_common python3"; fi
+	if ! command -v whois >/dev/null; then missing_common="$missing_common whois"; fi
     
     if [[ -n "$missing_common" ]]; then
         if [[ -f /etc/debian_version ]]; then apt-get install -y $missing_common; 
@@ -252,6 +255,30 @@ define_geoblocking() {
     echo "GEOBLOCK_COUNTRIES='$GEOBLOCK_COUNTRIES'" >> "$CONF_FILE"
 }
 
+define_asnblocking() {
+    if [[ "${1:-}" == "update" ]] && [[ -f "$CONF_FILE" ]]; then
+        if [[ -z "${BLOCK_ASNS:-}" ]]; then BLOCK_ASNS="none"; fi
+        log "INFO" "Update Mode: Preserving ASN-Blocking setting ($BLOCK_ASNS)"
+        return
+    fi
+
+    echo -e "\n${BLUE}=== Step: ASN Blocking (Hosters/ISPs) ===${NC}"
+    echo "Do you want to block entire Autonomous Systems (e.g., AS16276 for OVH)?"
+    read -p "Enable ASN Blocking? (y/N): " input_asn
+
+    if [[ "$input_asn" =~ ^[Yy]$ ]]; then
+        read -p "Enter ASN numbers separated by space (e.g., AS123 AS456): " asn_list
+        BLOCK_ASNS=${asn_list:-none}
+        # Force uppercase
+        BLOCK_ASNS=$(echo "$BLOCK_ASNS" | tr '[:lower:]' '[:upper:]')
+        log "INFO" "ASN Blocking ENABLED for: $BLOCK_ASNS"
+    else
+        BLOCK_ASNS="none"
+        log "INFO" "ASN Blocking DISABLED."
+    fi
+    echo "BLOCK_ASNS='$BLOCK_ASNS'" >> "$CONF_FILE"
+}
+
 measure_latency() {
     local url="$1"
     local time_sec
@@ -377,10 +404,45 @@ download_geoip() {
     fi
 }
 
+download_asn() {
+    if [[ "${BLOCK_ASNS:-none}" == "none" ]]; then
+        return
+    fi
+
+    echo -e "\n${BLUE}=== Step: Downloading ASN Data ===${NC}"
+    mkdir -p "$TMP_DIR"
+    mkdir -p "$SYSWARDEN_DIR"
+    > "$TMP_DIR/asn_raw.txt"
+
+    for asn in $(echo "$BLOCK_ASNS" | tr ' ' '\n'); do
+        if [[ -z "$asn" ]]; then continue; fi
+        
+        # Format the input properly
+        if [[ ! "$asn" =~ ^AS[0-9]+$ ]]; then asn="AS${asn//[!0-9]/}"; fi
+        
+        echo -n "Fetching IP blocks for ${asn}... "
+        # Extract CIDRs accurately using RADB routing database
+        if whois -h whois.radb.net -- "-i origin $asn" | grep -Eo '([0-9]{1,3}\.){3}[0-9]{1,3}/[0-9]{1,2}' >> "$TMP_DIR/asn_raw.txt"; then
+            echo -e "${GREEN}OK${NC}"
+        else
+            echo -e "${RED}FAIL${NC}"
+            log "WARN" "Failed to download data for $asn."
+        fi
+    done
+
+    if [[ -s "$TMP_DIR/asn_raw.txt" ]]; then
+        sort -u "$TMP_DIR/asn_raw.txt" > "$ASN_FILE"
+        log "INFO" "ASN Blocklist updated successfully."
+    else
+        log "WARN" "ASN Blocklist is empty."
+        touch "$ASN_FILE"
+    fi
+}
+
 apply_firewall_rules() {
     echo -e "\n${BLUE}=== Step 4: Applying Firewall Rules ($FIREWALL_BACKEND) ===${NC}"
-	
-	# --- LOCAL PERSISTENCE INJECTION ---
+    
+    # --- LOCAL PERSISTENCE INJECTION ---
     mkdir -p "$SYSWARDEN_DIR"
     touch "$WHITELIST_FILE" "$BLOCKLIST_FILE"
 
@@ -420,7 +482,21 @@ apply_firewall_rules() {
             geoip_rule="ip saddr @$GEOIP_SET_NAME log prefix \"[SysWarden-GEO] \" flags all drop"
         fi
 
-        # 3. Build and Apply Nftables config
+        # 3. ASN Blocklist Elements (Conditional)
+        local asn_block=""
+        local asn_rule=""
+        if [[ "${BLOCK_ASNS:-none}" != "none" ]] && [[ -s "$ASN_FILE" ]]; then
+            asn_block="
+    set $ASN_SET_NAME {
+        type ipv4_addr
+        flags interval
+        auto-merge
+        elements = { $(awk '{print $1 ","}' "$ASN_FILE") }
+    }"
+            asn_rule="ip saddr @$ASN_SET_NAME log prefix \"[SysWarden-ASN] \" flags all drop"
+        fi
+
+        # 4. Build and Apply Nftables config (Respecting Priority)
         cat <<EOF > "$TMP_DIR/syswarden.nft"
 table inet syswarden_table {
     set $SET_NAME {
@@ -428,10 +504,17 @@ table inet syswarden_table {
         flags interval
         auto-merge
         $main_elements
-    }$geoip_block
+    }$geoip_block$asn_block
     chain input {
         type filter hook input priority filter - 10; policy accept;
+        
+        # PRIORITY 1: Geo-Blocking (Broadest scope)
         $geoip_rule
+        
+        # PRIORITY 2: ASN-Blocking (Mid-level scope)
+        $asn_rule
+        
+        # PRIORITY 3: Standard Blocklist & Scanners
         ip saddr @$SET_NAME log prefix "[SysWarden-BLOCK] " flags all drop
         tcp dport { 23, 445, 1433, 3389, 5900 } log prefix "[SysWarden-BLOCK] " flags all drop
     }
@@ -461,8 +544,8 @@ EOF
         for port in 23 445 1433 3389 5900; do
             firewall-cmd --permanent --add-rich-rule="rule port port=\"$port\" protocol=\"tcp\" log prefix=\"[SysWarden-BLOCK] \" level=\"info\" drop" 2>/dev/null || true
         done
-		
-		# --- GEOIP INJECTION ---
+        
+        # --- GEOIP INJECTION ---
         if [[ "${GEOBLOCK_COUNTRIES:-none}" != "none" ]] && [[ -s "$GEOIP_FILE" ]]; then
             log "INFO" "Configuring Firewalld GeoIP Set..."
             firewall-cmd --permanent --remove-rich-rule="rule source ipset='$GEOIP_SET_NAME' log prefix='[SysWarden-GEO] ' level='info' drop" 2>/dev/null || true
@@ -471,11 +554,21 @@ EOF
             firewall-cmd --permanent --ipset="$GEOIP_SET_NAME" --add-entries-from-file="$GEOIP_FILE"
             firewall-cmd --permanent --add-rich-rule="rule source ipset='$GEOIP_SET_NAME' log prefix='[SysWarden-GEO] ' level='info' drop"
         fi
+
+        # --- ASN INJECTION ---
+        if [[ "${BLOCK_ASNS:-none}" != "none" ]] && [[ -s "$ASN_FILE" ]]; then
+            log "INFO" "Configuring Firewalld ASN Set..."
+            firewall-cmd --permanent --remove-rich-rule="rule source ipset='$ASN_SET_NAME' log prefix='[SysWarden-ASN] ' level='info' drop" 2>/dev/null || true
+            firewall-cmd --permanent --delete-ipset="$ASN_SET_NAME" 2>/dev/null || true
+            firewall-cmd --permanent --new-ipset="$ASN_SET_NAME" --type=hash:net --option=family=inet --option=maxelem=500000
+            firewall-cmd --permanent --ipset="$ASN_SET_NAME" --add-entries-from-file="$ASN_FILE"
+            firewall-cmd --permanent --add-rich-rule="rule source ipset='$ASN_SET_NAME' log prefix='[SysWarden-ASN] ' level='info' drop"
+        fi
         
         firewall-cmd --reload
         log "INFO" "Firewalld rules applied."
-		
-		elif [[ "$FIREWALL_BACKEND" == "ufw" ]]; then
+        
+    elif [[ "$FIREWALL_BACKEND" == "ufw" ]]; then
         log "INFO" "Configuring UFW with IPSet..."
         
         # 1. Create IPSet (UFW uses iptables underneath)
@@ -483,7 +576,6 @@ EOF
         sed "s/^/add $SET_NAME /" "$FINAL_LIST" | ipset restore -!
 
         # 2. Inject Rule into /etc/ufw/before.rules
-        # We insert the rule right after the standard UFW header to ensure it runs first
         UFW_RULES="/etc/ufw/before.rules"
         
         # Remove old rules if present to avoid duplicates
@@ -514,7 +606,22 @@ EOF
                 echo "-A ufw-before-input -m set --match-set $GEOIP_SET_NAME src -j DROP" >> "$UFW_RULES"
             fi
         fi
-        # -----------------------
+
+        # --- ASN INJECTION ---
+        if [[ "${BLOCK_ASNS:-none}" != "none" ]] && [[ -s "$ASN_FILE" ]]; then
+            log "INFO" "Configuring UFW ASN Set..."
+            ipset create "$ASN_SET_NAME" hash:net maxelem 500000 -exist
+            sed "s/^/add $ASN_SET_NAME /" "$ASN_FILE" | ipset restore -!
+            
+            sed -i "/$ASN_SET_NAME/d" "$UFW_RULES"
+            if grep -q "# End required lines" "$UFW_RULES"; then
+                sed -i "/# End required lines/a -A ufw-before-input -m set --match-set $ASN_SET_NAME src -j DROP" "$UFW_RULES"
+                sed -i "/# End required lines/a -A ufw-before-input -m set --match-set $ASN_SET_NAME src -j LOG --log-prefix '[SysWarden-ASN] '" "$UFW_RULES"
+            else
+                echo "-A ufw-before-input -m set --match-set $ASN_SET_NAME src -j LOG --log-prefix '[SysWarden-ASN] '" >> "$UFW_RULES"
+                echo "-A ufw-before-input -m set --match-set $ASN_SET_NAME src -j DROP" >> "$UFW_RULES"
+            fi
+        fi
 
         ufw reload
         log "INFO" "UFW rules applied."
@@ -537,7 +644,22 @@ EOF
             elif command -v service >/dev/null && [ -f /etc/init.d/iptables ]; then service iptables save; fi
         fi
 
-        # --- GEOIP INJECTION ---
+        # --- ASN INJECTION (Priority 2) ---
+        if [[ "${BLOCK_ASNS:-none}" != "none" ]] && [[ -s "$ASN_FILE" ]]; then
+            ipset create "${ASN_SET_NAME}_tmp" hash:net maxelem 500000 -exist
+            sed "s/^/add ${ASN_SET_NAME}_tmp /" "$ASN_FILE" | ipset restore -!
+            ipset create "$ASN_SET_NAME" hash:net maxelem 500000 -exist
+            ipset swap "${ASN_SET_NAME}_tmp" "$ASN_SET_NAME"
+            ipset destroy "${ASN_SET_NAME}_tmp"
+            
+            if ! iptables -C INPUT -m set --match-set "$ASN_SET_NAME" src -j DROP 2>/dev/null; then
+                # Insert at position 1 (Pushed down by GeoIP later if exists)
+                iptables -I INPUT 1 -m set --match-set "$ASN_SET_NAME" src -j DROP
+                iptables -I INPUT 1 -m set --match-set "$ASN_SET_NAME" src -j LOG --log-prefix "[SysWarden-ASN] "
+            fi
+        fi
+
+        # --- GEOIP INJECTION (Priority 1) ---
         if [[ "${GEOBLOCK_COUNTRIES:-none}" != "none" ]] && [[ -s "$GEOIP_FILE" ]]; then
             ipset create "${GEOIP_SET_NAME}_tmp" hash:net maxelem 500000 -exist
             # The -! flag is crucial to prevent ipset from crashing if two countries share the same CIDR
@@ -547,19 +669,18 @@ EOF
             ipset destroy "${GEOIP_SET_NAME}_tmp"
             
             if ! iptables -C INPUT -m set --match-set "$GEOIP_SET_NAME" src -j DROP 2>/dev/null; then
-                # Insert at position 1 (Top priority, enforced before the standard list)
+                # Insert at position 1 (Top priority, enforced before ASN and standard list)
                 iptables -I INPUT 1 -m set --match-set "$GEOIP_SET_NAME" src -j DROP
                 iptables -I INPUT 1 -m set --match-set "$GEOIP_SET_NAME" src -j LOG --log-prefix "[SysWarden-GEO] "
-                
-                # Independent persistence to ensure GeoIP rules survive a reboot
-                if command -v netfilter-persistent >/dev/null; then netfilter-persistent save; 
-                elif command -v service >/dev/null && [ -f /etc/init.d/iptables ]; then service iptables save; fi
             fi
         fi
-        # -----------------------
+        
+        # Save IPtables persistence for legacy OS
+        if command -v netfilter-persistent >/dev/null; then netfilter-persistent save; 
+        elif command -v service >/dev/null && [ -f /etc/init.d/iptables ]; then service iptables save; fi
     fi
-	
-	# --- DOCKER HERMETIC FIREWALL BLOCK ---
+    
+    # --- DOCKER HERMETIC FIREWALL BLOCK ---
     if [[ "${USE_DOCKER:-n}" == "y" ]]; then
         log "INFO" "Applying Global Rules to Docker (DOCKER-USER chain)..."
         
@@ -577,18 +698,34 @@ EOF
             fi
         fi
 
+        # 3. ASN-Blocking Set
+        if [[ "${BLOCK_ASNS:-none}" != "none" ]] && [[ -s "$ASN_FILE" ]]; then
+            if ! ipset list "$ASN_SET_NAME" >/dev/null 2>&1; then
+                 ipset create "$ASN_SET_NAME" hash:net maxelem 500000 -exist
+                 sed "s/^/add $ASN_SET_NAME /" "$ASN_FILE" | ipset restore -!
+            fi
+        fi
+
         if iptables -n -L DOCKER-USER >/dev/null 2>&1; then
             # Clean old rules
             iptables -D DOCKER-USER -m set --match-set "$SET_NAME" src -j DROP 2>/dev/null || true
             iptables -D DOCKER-USER -m set --match-set "$SET_NAME" src -j LOG --log-prefix "[SysWarden-DOCKER] " 2>/dev/null || true
             iptables -D DOCKER-USER -m set --match-set "$GEOIP_SET_NAME" src -j DROP 2>/dev/null || true
             iptables -D DOCKER-USER -m set --match-set "$GEOIP_SET_NAME" src -j LOG --log-prefix "[SysWarden-GEO] " 2>/dev/null || true
+            iptables -D DOCKER-USER -m set --match-set "$ASN_SET_NAME" src -j DROP 2>/dev/null || true
+            iptables -D DOCKER-USER -m set --match-set "$ASN_SET_NAME" src -j LOG --log-prefix "[SysWarden-ASN] " 2>/dev/null || true
             
-            # Apply Standard Blocklist
+            # Apply Standard Blocklist (Priority 3)
             iptables -I DOCKER-USER 1 -m set --match-set "$SET_NAME" src -j DROP
             iptables -I DOCKER-USER 1 -m set --match-set "$SET_NAME" src -j LOG --log-prefix "[SysWarden-DOCKER] "
 
-            # Apply Geo-Blocklist (Takes priority before standard blocklist)
+            # Apply ASN-Blocklist (Priority 2)
+            if [[ "${BLOCK_ASNS:-none}" != "none" ]] && [[ -s "$ASN_FILE" ]]; then
+                iptables -I DOCKER-USER 1 -m set --match-set "$ASN_SET_NAME" src -j DROP
+                iptables -I DOCKER-USER 1 -m set --match-set "$ASN_SET_NAME" src -j LOG --log-prefix "[SysWarden-ASN] "
+            fi
+
+            # Apply Geo-Blocklist (Priority 1)
             if [[ "${GEOBLOCK_COUNTRIES:-none}" != "none" ]] && [[ -s "$GEOIP_FILE" ]]; then
                 iptables -I DOCKER-USER 1 -m set --match-set "$GEOIP_SET_NAME" src -j DROP
                 iptables -I DOCKER-USER 1 -m set --match-set "$GEOIP_SET_NAME" src -j LOG --log-prefix "[SysWarden-GEO] "
@@ -1538,11 +1675,12 @@ uninstall_syswarden() {
     if command -v nft >/dev/null; then 
         nft delete table inet syswarden_table 2>/dev/null || true
     fi
-	
-	# UFW
+    
+    # UFW
     if [[ -f "/etc/ufw/before.rules" ]]; then
         sed -i "/$SET_NAME/d" /etc/ufw/before.rules
-		sed -i "/$GEOIP_SET_NAME/d" /etc/ufw/before.rules
+        sed -i "/$GEOIP_SET_NAME/d" /etc/ufw/before.rules
+        sed -i "/$ASN_SET_NAME/d" /etc/ufw/before.rules
         if command -v ufw >/dev/null; then ufw reload; fi
     fi
     
@@ -1550,7 +1688,9 @@ uninstall_syswarden() {
     if command -v firewall-cmd >/dev/null; then
         # Remove Blocklist Rules
         firewall-cmd --permanent --remove-rich-rule="rule source ipset='$SET_NAME' log prefix='[SysWarden-BLOCK] ' level='info' drop" 2>/dev/null || true
-		firewall-cmd --permanent --remove-rich-rule="rule source ipset='$GEOIP_SET_NAME' log prefix='[SysWarden-GEO] ' level='info' drop" 2>/dev/null || true
+        firewall-cmd --permanent --remove-rich-rule="rule source ipset='$GEOIP_SET_NAME' log prefix='[SysWarden-GEO] ' level='info' drop" 2>/dev/null || true
+        firewall-cmd --permanent --remove-rich-rule="rule source ipset='$ASN_SET_NAME' log prefix='[SysWarden-ASN] ' level='info' drop" 2>/dev/null || true
+        firewall-cmd --permanent --delete-ipset="$ASN_SET_NAME" 2>/dev/null || true
         firewall-cmd --permanent --delete-ipset="$GEOIP_SET_NAME" 2>/dev/null || true
         firewall-cmd --permanent --delete-ipset="$SET_NAME" 2>/dev/null || true
         
@@ -1563,21 +1703,24 @@ uninstall_syswarden() {
         firewall-cmd --reload 2>/dev/null || true
     fi
     
-	# Docker (DOCKER-USER chain)
+    # Docker (DOCKER-USER chain)
     if command -v iptables >/dev/null && iptables -n -L DOCKER-USER >/dev/null 2>&1; then
         iptables -D DOCKER-USER -m set --match-set "$SET_NAME" src -j DROP 2>/dev/null || true
         iptables -D DOCKER-USER -m set --match-set "$SET_NAME" src -j LOG --log-prefix "[SysWarden-DOCKER] " 2>/dev/null || true
-		iptables -D DOCKER-USER -m set --match-set "$GEOIP_SET_NAME" src -j DROP 2>/dev/null || true
+        iptables -D DOCKER-USER -m set --match-set "$GEOIP_SET_NAME" src -j DROP 2>/dev/null || true
         iptables -D DOCKER-USER -m set --match-set "$GEOIP_SET_NAME" src -j LOG --log-prefix "[SysWarden-GEO] " 2>/dev/null || true
+        iptables -D DOCKER-USER -m set --match-set "$ASN_SET_NAME" src -j DROP 2>/dev/null || true
+        iptables -D DOCKER-USER -m set --match-set "$ASN_SET_NAME" src -j LOG --log-prefix "[SysWarden-ASN] " 2>/dev/null || true
         
         if command -v netfilter-persistent >/dev/null; then netfilter-persistent save 2>/dev/null || true; 
         elif command -v service >/dev/null && [ -f /etc/init.d/iptables ]; then service iptables save 2>/dev/null || true; fi
     fi
-	
+    
     # IPSet / Iptables (Legacy)
     if command -v ipset >/dev/null; then 
         ipset destroy "$SET_NAME" 2>/dev/null || true
-		ipset destroy "$GEOIP_SET_NAME" 2>/dev/null || true
+        ipset destroy "$GEOIP_SET_NAME" 2>/dev/null || true
+        ipset destroy "$ASN_SET_NAME" 2>/dev/null || true
         # Note: iptables rules in RAM are cleared by reboot or manual flush, 
         # but persistent rules (netfilter-persistent) should be manually reviewed if used.
     fi
@@ -1596,8 +1739,8 @@ uninstall_syswarden() {
     else
         log "WARN" "No Fail2ban configuration found to revert."
     fi
-	
-	# Remove custom Docker banaction
+    
+    # Remove custom Docker banaction
     rm -f /etc/fail2ban/action.d/syswarden-docker.conf
 
     # 5. Remove Wazuh Agent (Optional but cleaner)
@@ -1624,9 +1767,9 @@ uninstall_syswarden() {
 
     # 6. Remove Config File
     rm -f "$CONF_FILE"
-	
-	# 7. Remove All logs
-	rm -f "$LOG_FILE"
+    
+    # 7. Remove All logs
+    rm -f "$LOG_FILE"
     
     log "INFO" "Cleanup complete. Logs at $LOG_FILE are kept for reference."
     echo -e "${GREEN}Uninstallation complete.${NC}"
@@ -2139,6 +2282,7 @@ if [[ "$MODE" != "update" ]]; then
     define_ssh_port "$MODE"
     define_docker_integration "$MODE"
 	define_geoblocking "$MODE"
+	define_asnblocking "$MODE"
     configure_fail2ban
 fi
 
@@ -2146,6 +2290,7 @@ select_list_type "$MODE"
 select_mirror "$MODE"
 download_list
 download_geoip
+download_asn
 apply_firewall_rules
 detect_protected_services
 
