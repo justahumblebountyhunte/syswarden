@@ -151,13 +151,23 @@ install_dependencies() {
         elif [[ -f /etc/redhat-release ]]; then dnf install -y ipset; fi
     fi
 
-    # --- RHEL/ROCKY ZERO-REBOOT FIX ---
-    # Force kernel module load using absolute paths to bypass sudo $PATH restrictions
-    /sbin/modprobe ip_set 2>/dev/null || true
-    /sbin/modprobe ip_set_hash_net 2>/dev/null || true
+    # --- RHEL/ROCKY ZERO-REBOOT FIX (DEBUG MODE) ---
+    log "INFO" "Forcing kernel modules load..."
     
-    # KERNEL SETTLE: Wait 3 seconds for Netlink sockets to fully initialize before creating sets
-    sleep 5
+    # On exécute en mode bavard (-v) et on capture l'erreur s'il y en a une
+    /sbin/modprobe -v ip_set 2>&1 | tee -a "$LOG_FILE" || log "ERROR" "modprobe ip_set failed!"
+    /sbin/modprobe -v ip_set_hash_net 2>&1 | tee -a "$LOG_FILE" || log "ERROR" "modprobe ip_set_hash_net failed!"
+    
+    # On vérifie physiquement dans la RAM si le module est là
+    if lsmod | grep -q "ip_set"; then
+        log "INFO" "SUCCESS: ip_set modules are currently loaded in RAM."
+    else
+        log "ERROR" "FATAL: ip_set modules are NOT in RAM!"
+        log "WARN" "Running Kernel: $(uname -r)"
+        log "WARN" "Available Modules: $(ls -d /lib/modules/* 2>/dev/null | tr '\n' ' ')"
+    fi
+    
+    sleep 3
     
     if command -v systemctl >/dev/null && systemctl is-active --quiet firewalld; then
         systemctl restart firewalld 2>/dev/null || true
