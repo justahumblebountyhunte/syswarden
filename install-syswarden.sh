@@ -1709,6 +1709,287 @@ maxretry = 3
 bantime  = 24h
 EOF
         fi
+		
+		# 26. DYNAMIC DETECTION: PRIVILEGE ESCALATION (PAM / SU / SUDO)
+        AUTH_LOG=""
+        if [[ -f "/var/log/auth.log" ]]; then AUTH_LOG="/var/log/auth.log"; # Debian/Ubuntu
+        elif [[ -f "/var/log/secure" ]]; then AUTH_LOG="/var/log/secure"; fi # RHEL/Alma
+
+        if [[ -n "$AUTH_LOG" ]]; then
+            log "INFO" "PAM/Auth logs detected. Enabling Privilege Escalation Guard (Su/Sudo)."
+
+            # Create Filter for PAM, su, and sudo failures where rhost (Remote Host) is logged
+            # This detects internal lateral movement and brute-force attempts on PAM-aware services
+            if [[ ! -f "/etc/fail2ban/filter.d/syswarden-privesc.conf" ]]; then
+                cat <<'EOF' > /etc/fail2ban/filter.d/syswarden-privesc.conf
+[Definition]
+failregex = ^.*(?:su|sudo)(?:\[\d+\])?: .*pam_unix\((?:su|sudo):auth\): authentication failure;.*rhost=<HOST>(?:\s+user=.*)?\s*$
+            ^.*(?:su|sudo)(?:\[\d+\])?: .*(?:FAILED SU|FAILED su|authentication failure).*rhost=<HOST>.*\s*$
+            ^.* PAM \d+ more authentication failures; logname=.* uid=.* euid=.* tty=.* ruser=.* rhost=<HOST>.*\s*$
+ignoreregex = 
+EOF
+            fi
+
+            cat <<EOF >> /etc/fail2ban/jail.local
+
+# --- Privilege Escalation Protection (PAM/Su/Sudo) ---
+[syswarden-privesc]
+enabled = true
+port    = all
+filter  = syswarden-privesc
+logpath = $AUTH_LOG
+backend = auto
+maxretry = 3
+bantime  = 24h
+EOF
+        fi
+		
+		# 27. DYNAMIC DETECTION: CI/CD & DEVOPS INFRASTRUCTURE (JENKINS / GITLAB)
+        
+        # --- JENKINS ---
+        if [[ -f "/var/log/jenkins/jenkins.log" ]]; then
+            log "INFO" "Jenkins CI/CD logs detected. Enabling Jenkins Guard."
+
+            # Create Filter for Jenkins Authentication Failures
+            # Catches standard Jenkins login failures and invalid API token attempts
+            if [[ ! -f "/etc/fail2ban/filter.d/syswarden-jenkins.conf" ]]; then
+                cat <<'EOF' > /etc/fail2ban/filter.d/syswarden-jenkins.conf
+[Definition]
+failregex = ^.*(?:WARN|INFO).* (?:hudson\.security\.AuthenticationProcessingFilter2|jenkins\.security).* (?:unsuccessfulAuthentication|Login attempt failed).* from <HOST>.*\s*$
+            ^.*(?:WARN|INFO).* Invalid password/token for user .* from <HOST>.*\s*$
+ignoreregex = 
+EOF
+            fi
+
+            cat <<EOF >> /etc/fail2ban/jail.local
+
+# --- Jenkins CI/CD Protection ---
+[syswarden-jenkins]
+enabled  = true
+port     = http,https,8080
+filter   = syswarden-jenkins
+logpath  = /var/log/jenkins/jenkins.log
+backend  = auto
+maxretry = 5
+bantime  = 24h
+EOF
+        fi
+
+        # --- GITLAB ---
+        GITLAB_LOG=""
+        if [[ -f "/var/log/gitlab/gitlab-rails/application.log" ]]; then GITLAB_LOG="/var/log/gitlab/gitlab-rails/application.log"
+        elif [[ -f "/var/log/gitlab/gitlab-rails/auth.log" ]]; then GITLAB_LOG="/var/log/gitlab/gitlab-rails/auth.log"; fi
+
+        if [[ -n "$GITLAB_LOG" ]]; then
+            log "INFO" "GitLab logs detected. Enabling GitLab Guard."
+
+            # Create Filter for GitLab Authentication Failures
+            # Catches web UI login failures and API authentication errors
+            if [[ ! -f "/etc/fail2ban/filter.d/syswarden-gitlab.conf" ]]; then
+                cat <<'EOF' > /etc/fail2ban/filter.d/syswarden-gitlab.conf
+[Definition]
+failregex = ^.*(?:Failed Login|Authentication failed).* (?:user|username)=.* (?:ip|IP)=<HOST>.*\s*$
+            ^.*ActionController::InvalidAuthenticityToken.* IP: <HOST>.*\s*$
+ignoreregex = 
+EOF
+            fi
+
+            cat <<EOF >> /etc/fail2ban/jail.local
+
+# --- GitLab DevOps Protection ---
+[syswarden-gitlab]
+enabled  = true
+port     = http,https
+filter   = syswarden-gitlab
+logpath  = $GITLAB_LOG
+backend  = auto
+maxretry = 5
+bantime  = 24h
+EOF
+        fi
+		
+		# 28. DYNAMIC DETECTION: CRITICAL MIDDLEWARES (REDIS / RABBITMQ)
+        
+        # --- REDIS ---
+        REDIS_LOG=""
+        if [[ -f "/var/log/redis/redis-server.log" ]]; then REDIS_LOG="/var/log/redis/redis-server.log"
+        elif [[ -f "/var/log/redis/redis.log" ]]; then REDIS_LOG="/var/log/redis/redis.log"; fi
+
+        if [[ -n "$REDIS_LOG" ]]; then
+            log "INFO" "Redis logs detected. Enabling Redis Guard."
+
+            # Create Filter for Redis Authentication Failures
+            # Covers both legacy 'requirepass' failures and modern Redis 6.0+ ACL failures
+            if [[ ! -f "/etc/fail2ban/filter.d/syswarden-redis.conf" ]]; then
+                cat <<'EOF' > /etc/fail2ban/filter.d/syswarden-redis.conf
+[Definition]
+failregex = ^.* <HOST>:[0-9]+ .* [Aa]uthentication failed.*\s*$
+            ^.* Client <HOST>:[0-9]+ disconnected, .* [Aa]uthentication.*\s*$
+ignoreregex = 
+EOF
+            fi
+
+            cat <<EOF >> /etc/fail2ban/jail.local
+
+# --- Redis In-Memory Data Store Protection ---
+[syswarden-redis]
+enabled  = true
+port     = 6379
+filter   = syswarden-redis
+logpath  = $REDIS_LOG
+backend  = auto
+maxretry = 4
+bantime  = 24h
+EOF
+        fi
+
+        # --- RABBITMQ ---
+        RABBIT_LOG=""
+        # RabbitMQ appends the node name to the log file (e.g., rabbit@hostname.log)
+        if ls /var/log/rabbitmq/rabbit@*.log 1> /dev/null 2>&1; then
+            RABBIT_LOG="/var/log/rabbitmq/rabbit@*.log"
+        elif [[ -f "/var/log/rabbitmq/rabbitmq.log" ]]; then 
+            RABBIT_LOG="/var/log/rabbitmq/rabbitmq.log"
+        fi
+
+        if [[ -n "$RABBIT_LOG" ]]; then
+            log "INFO" "RabbitMQ logs detected. Enabling RabbitMQ Guard."
+
+            # Create Filter for RabbitMQ Authentication Failures
+            # Catches AMQP protocol brute-force and HTTP Management API login failures
+            if [[ ! -f "/etc/fail2ban/filter.d/syswarden-rabbitmq.conf" ]]; then
+                cat <<'EOF' > /etc/fail2ban/filter.d/syswarden-rabbitmq.conf
+[Definition]
+failregex = ^.*HTTP access denied: .* from <HOST>.*\s*$
+            ^.*AMQP connection <HOST>:[0-9]+ .* failed: .*authentication failure.*\s*$
+            ^.*<HOST>:[0-9]+ .* (?:invalid credentials|authentication failed).*\s*$
+ignoreregex = 
+EOF
+            fi
+
+            cat <<EOF >> /etc/fail2ban/jail.local
+
+# --- RabbitMQ Message Broker Protection ---
+[syswarden-rabbitmq]
+enabled  = true
+port     = 5672,15672
+filter   = syswarden-rabbitmq
+logpath  = $RABBIT_LOG
+backend  = auto
+maxretry = 4
+bantime  = 24h
+EOF
+        fi
+		
+		# 29. DYNAMIC DETECTION: PORT SCANNERS & LATERAL MOVEMENT (NMAP / MASSCAN)
+        
+        FIREWALL_LOG=""
+        # Determine the correct kernel logging path based on the OS
+        if [[ -f "/var/log/kern.log" ]]; then FIREWALL_LOG="/var/log/kern.log"; # Debian/Ubuntu
+        elif [[ -f "/var/log/messages" ]]; then FIREWALL_LOG="/var/log/messages"; # RHEL/Alma
+        elif [[ -f "/var/log/syslog" ]]; then FIREWALL_LOG="/var/log/syslog"; fi # Legacy fallback
+
+        if [[ -n "$FIREWALL_LOG" ]]; then
+            log "INFO" "Kernel logs detected. Enabling Port Scanner Guard."
+
+            # Create Filter for SysWarden Firewall Drops
+            # Parses the kernel logs to extract the Source IP (SRC) of the scanner
+            if [[ ! -f "/etc/fail2ban/filter.d/syswarden-portscan.conf" ]]; then
+                cat <<'EOF' > /etc/fail2ban/filter.d/syswarden-portscan.conf
+[Definition]
+failregex = ^.*(?:kernel: |\[[0-9. ]+\] ).*\[SysWarden-BLOCK\].*SRC=<HOST> .*$
+ignoreregex = 
+EOF
+            fi
+
+            cat <<EOF >> /etc/fail2ban/jail.local
+
+# --- Port Scanner & Lateral Movement Protection ---
+[syswarden-portscan]
+enabled  = true
+port     = all
+filter   = syswarden-portscan
+logpath  = $FIREWALL_LOG
+backend  = auto
+maxretry = 3
+findtime = 10m
+bantime  = 24h
+EOF
+        fi
+		
+		# 30. DYNAMIC DETECTION: SENSITIVE FILE INTEGRITY & AUDITD ANOMALIES
+        AUDIT_LOG="/var/log/audit/audit.log"
+
+        if command -v auditd >/dev/null 2>&1 && [[ -f "$AUDIT_LOG" ]]; then
+            log "INFO" "Auditd logs detected. Enabling System Integrity Guard."
+
+            # Create Filter for Auditd anomalies (Unauthorized access, failed auth, bad commands)
+            # Looks for kernel-level audit records containing a remote address (addr=IP) 
+            # and a failure result (res=failed or res=0), or binary crash anomalies.
+            if [[ ! -f "/etc/fail2ban/filter.d/syswarden-auditd.conf" ]]; then
+                cat <<'EOF' > /etc/fail2ban/filter.d/syswarden-auditd.conf
+[Definition]
+failregex = ^.*type=(?:USER_LOGIN|USER_AUTH|USER_ERR|USER_CMD).*addr=(?:::f{4}:)?<HOST>.*res=(?:failed|0)\s*$
+            ^.*type=ANOM_ABEND.*addr=(?:::f{4}:)?<HOST>.*\s*$
+ignoreregex = 
+EOF
+            fi
+
+            cat <<EOF >> /etc/fail2ban/jail.local
+
+# --- System Integrity & Kernel Audit Protection ---
+[syswarden-auditd]
+enabled  = true
+port     = all
+filter   = syswarden-auditd
+logpath  = $AUDIT_LOG
+backend  = auto
+maxretry = 3
+bantime  = 24h
+EOF
+        fi
+		
+		# 31. DYNAMIC DETECTION: RCE & REVERSE SHELL PAYLOADS
+        RCE_LOGS=""
+        # Dynamically aggregate all available web access logs (Nginx, Apache Debian, Apache RHEL)
+        for log_file in "/var/log/nginx/access.log" "/var/log/apache2/access.log" "/var/log/httpd/access_log"; do
+            if [[ -f "$log_file" ]]; then
+                # Space-separated list of log files for Fail2ban
+                RCE_LOGS="$RCE_LOGS $log_file"
+            fi
+        done
+        
+        # Trim leading/trailing whitespace safely
+        RCE_LOGS=$(echo "$RCE_LOGS" | xargs)
+
+        if [[ -n "$RCE_LOGS" ]]; then
+            log "INFO" "Web access logs detected. Enabling Reverse Shell & RCE Guard."
+
+            # Create Filter for Remote Code Execution and Reverse Shell signatures
+            # Catches common payloads: bash interactive, netcat, wget/curl drops, and python/php one-liners
+            # Includes URL-encoded equivalents (%2F = /, %20 = space) to catch obfuscated attacks
+            if [[ ! -f "/etc/fail2ban/filter.d/syswarden-revshell.conf" ]]; then
+                cat <<'EOF' > /etc/fail2ban/filter.d/syswarden-revshell.conf
+[Definition]
+failregex = ^<HOST> .* "(?:GET|POST|HEAD|PUT) .*(?:/bin/bash|%2Fbin%2Fbash|/bin/sh|%2Fbin%2Fsh|nc\s+-e|nc%20-e|nc\s+-c|curl\s+http|curl%20http|wget\s+http|wget%20http|python\s+-c|php\s+-r|;\s*bash\s+-i|&\s*bash\s+-i).*" .*$
+ignoreregex = 
+EOF
+            fi
+
+            cat <<EOF >> /etc/fail2ban/jail.local
+
+# --- Reverse Shell & RCE Injection Protection ---
+[syswarden-revshell]
+enabled  = true
+port     = http,https
+filter   = syswarden-revshell
+logpath  = $RCE_LOGS
+backend  = auto
+# Zero-Tolerance policy for RCE payloads
+maxretry = 1
+bantime  = 24h
+EOF
+        fi
 
         log "INFO" "Starting Fail2ban service..."
         if command -v systemctl >/dev/null; then
