@@ -16,7 +16,7 @@ LOG_FILE="/var/log/syswarden-install.log"
 CONF_FILE="/etc/syswarden.conf"
 SET_NAME="syswarden_blacklist"
 TMP_DIR=$(mktemp -d)
-VERSION="v6.50"
+VERSION="v7.00"
 SYSWARDEN_DIR="/etc/syswarden"
 WHITELIST_FILE="$SYSWARDEN_DIR/whitelist.txt"
 BLOCKLIST_FILE="$SYSWARDEN_DIR/blocklist.txt"
@@ -369,8 +369,8 @@ define_asnblocking() {
         
         # Fail-Safe: Revert to 'none' if empty input was given
         if [[ -z "$BLOCK_ASNS" ]] || [[ "$BLOCK_ASNS" == "none" ]]; then
-            BLOCK_ASNS="none"
-            log "WARN" "ASN list empty. ASN Blocking DISABLED."
+            BLOCK_ASNS="auto"
+            log "INFO" "No custom ASNs provided. Will use Spamhaus DROP list only."
         else
             # Force uppercase
             BLOCK_ASNS=$(echo "$BLOCK_ASNS" | tr '[:lower:]' '[:upper:]')
@@ -518,7 +518,28 @@ download_asn() {
     mkdir -p "$SYSWARDEN_DIR"
     > "$TMP_DIR/asn_raw.txt"
 
-    for asn in $(echo "$BLOCK_ASNS" | tr ' ' '\n'); do
+    # --- SPAMHAUS ASN-DROP INTEGRATION ---
+    echo -n "Fetching Spamhaus ASN-DROP list (Cybercrime Hosters)... "
+    local spamhaus_url="https://www.spamhaus.org/drop/asndrop.txt"
+    # Capture only AS numbers (e.g., AS12345) and convert to single line space-separated
+    local spamhaus_asns
+    spamhaus_asns=$(curl -sS -L --retry 2 --connect-timeout 5 "$spamhaus_url" 2>/dev/null | grep -Eo '^AS[0-9]+' | tr '\n' ' ' || true)
+    
+    if [[ -n "$spamhaus_asns" ]]; then
+        echo -e "${GREEN}OK${NC}"
+        # Merge dynamic ASNs with user-defined ASNs
+        BLOCK_ASNS="$BLOCK_ASNS $spamhaus_asns"
+    else
+        echo -e "${YELLOW}Failed/Skipped${NC}"
+        log "WARN" "Could not fetch Spamhaus ASN-DROP. Proceeding with custom ASNs only."
+    fi
+    # -------------------------------------
+
+    # Remove duplicates from the combined list (User + Spamhaus)
+    local combined_asns
+    combined_asns=$(echo "$BLOCK_ASNS" | tr ' ' '\n' | sort -u | tr '\n' ' ')
+
+    for asn in $combined_asns; do
         if [[ -z "$asn" ]]; then continue; fi
         
         # Format the input properly
@@ -2578,7 +2599,7 @@ fi
 if [[ "$MODE" != "update" ]]; then
     clear
     echo -e "${GREEN}#############################################################"
-    echo -e "#     SysWarden Tool Installer (Universal v6.50)     #"
+    echo -e "#     SysWarden Tool Installer (Universal v7.00)     #"
     echo -e "#############################################################${NC}"
 fi
 
