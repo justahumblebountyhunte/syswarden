@@ -521,9 +521,9 @@ download_asn() {
     # --- SPAMHAUS ASN-DROP INTEGRATION ---
     echo -n "Fetching Spamhaus ASN-DROP list (Cybercrime Hosters)... "
     local spamhaus_url="https://www.spamhaus.org/drop/asndrop.txt"
-    # Capture only AS numbers (e.g., AS12345) and convert to single line space-separated
+    # FIX 1: Added a Browser User-Agent (-A) to bypass Spamhaus WAF/Cloudflare blocks
     local spamhaus_asns
-    spamhaus_asns=$(curl -sS -L --retry 2 --connect-timeout 5 "$spamhaus_url" 2>/dev/null | grep -Eo '^AS[0-9]+' | tr '\n' ' ' || true)
+    spamhaus_asns=$(curl -sS -L -A "Mozilla/5.0 (Windows NT 10.0; Win64; x64)" --retry 2 --connect-timeout 5 "$spamhaus_url" 2>/dev/null | grep -Eo '^AS[0-9]+' | tr '\n' ' ' || true)
     
     if [[ -n "$spamhaus_asns" ]]; then
         echo -e "${GREEN}OK${NC}"
@@ -540,10 +540,17 @@ download_asn() {
     combined_asns=$(echo "$BLOCK_ASNS" | tr ' ' '\n' | sort -u | tr '\n' ' ')
 
     for asn in $combined_asns; do
-        if [[ -z "$asn" ]]; then continue; fi
+        # --- FIX 2: PREVENT LOGIC LEAK ---
+        # Ignore empty strings or our "auto"/"none" placeholder keywords
+        if [[ -z "$asn" ]] || [[ "$asn" == "auto" ]] || [[ "$asn" == "none" ]]; then continue; fi
         
-        # Format the input properly
-        if [[ ! "$asn" =~ ^AS[0-9]+$ ]]; then asn="AS${asn//[!0-9]/}"; fi
+        # Format the input properly (e.g., if user typed '12345' instead of 'AS12345')
+        if [[ ! "$asn" =~ ^AS[0-9]+$ ]]; then 
+            local clean_num="${asn//[!0-9]/}"
+            if [[ -z "$clean_num" ]]; then continue; fi # Failsafe
+            asn="AS${clean_num}"
+        fi
+        # ---------------------------------
         
         echo -n "Fetching IP blocks for ${asn}... "
         # Extract CIDRs accurately using RADB routing database
