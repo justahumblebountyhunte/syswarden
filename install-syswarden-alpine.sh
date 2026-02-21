@@ -2126,9 +2126,10 @@ show_alerts_dashboard() {
         printf "${YELLOW}%-19s | %-10s | %-16s | %-20s | %-12s | %-8s${NC}\n" "DATE / HOUR" "SOURCE" "IP ADDRESS" "RULES" "PORT" "DECISION"
         echo "----------------------------------------------------------------------------------------------------"
 
+        # Regex corrigée pour capturer proprement la date Rsyslog (Format ISO avec T)
         local date_regex="^([A-Z][a-z]{2}[[:space:]]+[0-9]+[[:space:]]+[0-9:]+|[0-9]{4}-[0-9]{2}-[0-9]{2}[T[:space:]][0-9]{2}:[0-9]{2}:[0-9]{2})"
 
-        # 1. FAIL2BAN ENTRIES (Via Flat File)
+        # 1. FAIL2BAN ENTRIES
         if [[ -f "/var/log/fail2ban.log" ]]; then
              { grep " Ban " "/var/log/fail2ban.log" || true; } | tail -n 10 | while read -r line; do
                 if [[ $line =~ \[([a-zA-Z0-9_-]+)\][[:space:]]+Ban[[:space:]]+([0-9.]+) ]]; then
@@ -2141,15 +2142,18 @@ show_alerts_dashboard() {
             done
         fi
 
-        # 2. FIREWALL ENTRIES (Via Flat File)
+        # 2. FIREWALL ENTRIES
         if [[ -f "/var/log/messages" ]]; then
              { grep -E "SysWarden-(BLOCK|GEO|ASN|DOCKER)" "/var/log/messages" || true; } | tail -n 20 | while read -r line; do
                 if [[ $line =~ SRC=([0-9.]+) ]]; then
                     ip="${BASH_REMATCH[1]}"
                     rule="Unknown"
-                    if [[ $line =~ (SysWarden-[A-Z]+) ]]; then rule="${BASH_REMATCH[1]}"; fi
+                    # Capture précise du type de règle
+                    if [[ $line =~ (SysWarden-(BLOCK|GEO|ASN|DOCKER)) ]]; then rule="${BASH_REMATCH[1]}"; fi
+                    
                     port="Global"
                     if [[ $line =~ DPT=([0-9]+) ]]; then port="TCP/${BASH_REMATCH[1]}"; fi
+                    
                     dtime="Unknown"
                     if [[ $line =~ $date_regex ]]; then dtime="${BASH_REMATCH[1]}"; fi
                     
