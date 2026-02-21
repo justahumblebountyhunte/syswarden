@@ -101,7 +101,7 @@ detect_os_backend() {
 install_dependencies() {
     log "INFO" "Installing required dependencies..."
     
-    local deps="curl python3 py3-requests ipset fail2ban bash coreutils grep gawk sed procps logrotate ncurses whois"
+    local deps="curl python3 py3-requests ipset fail2ban bash coreutils grep gawk sed procps logrotate ncurses whois rsyslog"
     
     if [[ "$FIREWALL_BACKEND" == "nftables" ]]; then
         deps="$deps nftables"
@@ -128,6 +128,10 @@ install_dependencies() {
         log "ERROR" "OpenRC is missing. This script requires a standard Alpine setup."
         exit 1
     fi
+	
+	# Ensure standard syslog is active to capture Kernel Firewall Drops
+    rc-update add rsyslog default >/dev/null 2>&1 || true
+    rc-service rsyslog restart >/dev/null 2>&1 || true
 
     log "INFO" "All dependencies check complete."
 }
