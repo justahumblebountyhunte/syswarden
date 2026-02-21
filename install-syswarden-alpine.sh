@@ -572,6 +572,7 @@ EOF
 
     else
         # Fallback IPSET / IPTABLES
+		log "INFO" "Applying Iptables rules and loading IPSet lists..."
         rc-update add iptables default >/dev/null 2>&1 || true
         
         ipset create "${SET_NAME}_tmp" hash:net maxelem 200000 -exist
