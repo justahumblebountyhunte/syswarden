@@ -1543,6 +1543,8 @@ import socket
 import threading
 import json
 import os
+import signal
+import sys
 
 # --- CONFIGURATION ---
 API_KEY = "PLACEHOLDER_KEY"
@@ -1554,6 +1556,23 @@ CACHE_FILE = "/var/lib/syswarden/abuse_cache.json"
 # --- DEFINITIONS ---
 reported_cache = {}
 cache_lock = threading.Lock()
+tail_proc = None
+
+# --- GRACEFUL SHUTDOWN (OPENRC STOP/RESTART FIX) ---
+def cleanup_and_exit(signum, frame):
+    global tail_proc
+    print("[INFO] Signal received. Shutting down gracefully...", flush=True)
+    if tail_proc is not None:
+        try:
+            tail_proc.terminate()
+            tail_proc.wait(timeout=2)
+        except Exception:
+            pass
+    sys.exit(0)
+
+# Intercept OpenRC signals
+signal.signal(signal.SIGTERM, cleanup_and_exit)
+signal.signal(signal.SIGINT, cleanup_and_exit)
 
 def load_cache():
     global reported_cache
@@ -1625,6 +1644,7 @@ def send_report(ip, categories, comment):
         save_cache()
 
 def monitor_logs():
+    global tail_proc
     print("🚀 Monitoring logs (Alpine Unified SysWarden Reporter)...", flush=True)
     load_cache() # Load JSON cache on startup
     
@@ -1638,16 +1658,16 @@ def monitor_logs():
         return
 
     cmd = ['tail', '-F'] + files_to_watch
-    f = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    tail_proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     p = select.poll()
-    p.register(f.stdout)
+    p.register(tail_proc.stdout)
 
     regex_fw = re.compile(r"\[SysWarden-(BLOCK|GEO|ASN|DOCKER)\].*SRC=([\d\.]+).*DPT=(\d+)")
     regex_f2b = re.compile(r"\[([a-zA-Z0-9_-]+)\]\s+Ban\s+([\d\.]+)")
 
     while True:
         if p.poll(100):
-            line = f.stdout.readline().decode('utf-8', errors='ignore')
+            line = tail_proc.stdout.readline().decode('utf-8', errors='ignore')
             if not line: continue
 
             # --- FIREWALL LOGIC ---
@@ -1728,7 +1748,7 @@ command_background=true
 pidfile="/run/${name}.pid"
 
 depend() {
-    need net
+    need net rsyslog
     after firewall
 }
 EOF
@@ -2105,7 +2125,7 @@ show_alerts_dashboard() {
         printf "${YELLOW}%-19s | %-10s | %-16s | %-20s | %-12s | %-8s${NC}\n" "DATE / HOUR" "SOURCE" "IP ADDRESS" "RULES" "PORT" "DECISION"
         echo "----------------------------------------------------------------------------------------------------"
 
-        local date_regex="^([A-Z][a-z]{2}[[:space:]]+[0-9]+[[:space:]]+[0-9:]+|[0-9]{4}-[0-9]{2}-[0-9]{2}[[:space:]]+[0-9:]+)"
+        local date_regex="^([A-Z][a-z]{2}[[:space:]]+[0-9]+[[:space:]]+[0-9:]+|[0-9]{4}-[0-9]{2}-[0-9]{2}[T[:space:]][0-9]{2}:[0-9]{2}:[0-9]{2})"
 
         # 1. FAIL2BAN ENTRIES (Via Flat File)
         if [[ -f "/var/log/fail2ban.log" ]]; then
