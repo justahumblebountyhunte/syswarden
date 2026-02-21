@@ -10,6 +10,8 @@ fi
 
 set -euo pipefail
 IFS=$'\n\t'
+# --- SECURE PATH FOR ALPINE ---
+export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 
 # --- COLORS & FORMATTING ---
 RED='\033[0;31m'
@@ -96,9 +98,9 @@ detect_os_backend() {
 }
 
 install_dependencies() {
-    log "INFO" "Updating apk repositories and installing dependencies..."
-    apk update -q
-
+    log "INFO" "Installing required dependencies..."
+    
+    # Base dependencies required for SysWarden v8.00
     local deps="curl python3 py3-requests ipset fail2ban bash coreutils grep gawk sed procps logrotate ncurses whois"
     
     if [[ "$FIREWALL_BACKEND" == "nftables" ]]; then
@@ -107,12 +109,13 @@ install_dependencies() {
         deps="$deps iptables ip6tables"
     fi
 
-    for pkg in $deps; do
-        if ! apk info -e "$pkg" >/dev/null 2>&1; then
-            log "INFO" "Installing package: $pkg"
-            apk add -q "$pkg"
-        fi
-    done
+    # Using --no-cache is the Alpine standard. It updates the index, installs, and cleans up in one go.
+    # We pass the entire list to apk add directly (it is fast and idempotent).
+    # shellcheck disable=SC2086
+    if ! apk add --no-cache $deps >/dev/null; then
+        log "ERROR" "Failed to install dependencies via apk. Check your network or repositories."
+        exit 1
+    fi
 
     # Ensure OpenRC services are available
     if ! command -v rc-update >/dev/null; then
@@ -1475,6 +1478,9 @@ bantime  = 24h
 EOF
         fi
 
+        # --- ALPINE FIX: Prevent Fail2ban crash due to missing log files ---
+        touch /var/log/messages /var/log/fail2ban.log 2>/dev/null || true
+        
         # Enable OpenRC service
         rc-update add fail2ban default >/dev/null 2>&1 || true
         rc-service fail2ban restart >/dev/null 2>&1 || true
