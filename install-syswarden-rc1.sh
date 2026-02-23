@@ -2400,7 +2400,6 @@ setup_ztna_spa() {
     mkdir -p /etc/fwknop
     cat <<EOF > /etc/fwknop/access.conf
 SOURCE ANY
-REQUIRE_USERNAME root
 KEY_BASE64 $KEY_BASE64
 HMAC_KEY_BASE64 $HMAC_BASE64
 FW_ACCESS_TIMEOUT 30
