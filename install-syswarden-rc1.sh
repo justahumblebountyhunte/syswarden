@@ -796,11 +796,8 @@ apply_firewall_rules() {
             asn_rule="ip saddr @$ASN_SET_NAME log prefix \"[SysWarden-ASN] \" flags all drop"
         fi
 		
-		# 4. ZTNA / SPA Rule (Conditional)
+		# 4. ZTNA / SPA Rule (Handled via iptables for fwknop compatibility)
         local ztna_rule=""
-        if [[ "${USE_SPA:-n}" == "y" ]]; then
-            ztna_rule="tcp dport $SSH_PORT log prefix \"[SysWarden-ZTNA] \" drop"
-        fi
 
         # 4.5. Build Whitelist Set for Nftables
         local wl_elements=""
@@ -846,6 +843,27 @@ table inet syswarden_table {
 }
 EOF
         nft -f "$TMP_DIR/syswarden.nft"
+		
+		# --- ZTNA COMPATIBILITY FIX FOR NFTABLES ---
+        if [[ "${USE_SPA:-n}" == "y" ]]; then
+            log "INFO" "ZTNA: Cloaking SSH port via iptables-nft for fwknop compatibility..."
+            iptables -D INPUT -p tcp --dport "$SSH_PORT" -j DROP 2>/dev/null || true
+            
+            # 1. Exempt whitelisted IPs from the ZTNA drop
+            if [[ -s "$WHITELIST_FILE" ]]; then
+                while read -r ip; do
+                    if [[ -n "$ip" ]]; then
+                        iptables -D INPUT -s "$ip" -p tcp --dport "$SSH_PORT" -j ACCEPT 2>/dev/null || true
+                        iptables -I INPUT 1 -s "$ip" -p tcp --dport "$SSH_PORT" -j ACCEPT
+                    fi
+                done < "$WHITELIST_FILE"
+            fi
+            
+            # 2. Drop the port for everyone else
+            iptables -A INPUT -p tcp --dport "$SSH_PORT" -j DROP
+            if command -v netfilter-persistent >/dev/null; then netfilter-persistent save >/dev/null 2>&1 || true; fi
+        fi
+        # -------------------------------------------
 
         # --- PERSISTENCE & SERVICE ENABLEMENT ---
         log "INFO" "Saving Nftables ruleset to /etc/nftables.conf for persistence..."
