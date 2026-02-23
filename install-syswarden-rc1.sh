@@ -2431,7 +2431,7 @@ EOF
     log "INFO" "SPA configured successfully on interface $ACTIVE_IF."
 
     # Extract Public IP for the client command
-    local SERVER_IP; SERVER_IP=$(curl -s ifconfig.me 2>/dev/null || echo "YOUR_SERVER_IP")
+    local SERVER_IP; SERVER_IP=$(curl -4 -s ifconfig.me 2>/dev/null || echo "YOUR_SERVER_IP")
 
     echo -e "\n${RED}!!! CRITICAL: SAVE THESE INSTRUCTIONS NOW !!!${NC}"
     echo -e "Your SSH port ($SSH_PORT) is now INVISIBLE. To connect, you must run this on your client machine:\n"
