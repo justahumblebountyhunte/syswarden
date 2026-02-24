@@ -16,7 +16,7 @@ LOG_FILE="/var/log/syswarden-install.log"
 CONF_FILE="/etc/syswarden.conf"
 SET_NAME="syswarden_blacklist"
 TMP_DIR=$(mktemp -d)
-VERSION="v8.11"
+VERSION="v9.01"
 SYSWARDEN_DIR="/etc/syswarden"
 WHITELIST_FILE="$SYSWARDEN_DIR/whitelist.txt"
 BLOCKLIST_FILE="$SYSWARDEN_DIR/blocklist.txt"
@@ -151,6 +151,19 @@ install_dependencies() {
         systemctl enable --now crond 2>/dev/null || systemctl enable --now cron 2>/dev/null || true
     fi
     # --------------------------------------------------------------------
+	
+	# --- WIREGUARD & QR-CODE DEPENDENCIES ---
+    if ! command -v wg >/dev/null || ! command -v qrencode >/dev/null; then
+        log "WARN" "Installing package: WireGuard & Qrencode"
+        if [[ -f /etc/debian_version ]]; then 
+            apt-get install -y wireguard qrencode
+        elif [[ -f /etc/redhat-release ]]; then 
+            log "INFO" "Enabling EPEL repository (Required for Qrencode)..."
+            dnf install -y epel-release || true
+            dnf install -y wireguard-tools qrencode
+        fi
+    fi
+    # ----------------------------------------
 
     if ! command -v ipset >/dev/null; then
         log "WARN" "Installing package: ipset"
@@ -220,6 +233,50 @@ define_ssh_port() {
 
     echo "SSH_PORT='$SSH_PORT'" >> "$CONF_FILE"
     log "INFO" "SSH Port configured as: $SSH_PORT"
+}
+
+define_wireguard() {
+    if [[ "${1:-}" == "update" ]] && [[ -f "$CONF_FILE" ]]; then
+        if [[ -z "${USE_WIREGUARD:-}" ]]; then USE_WIREGUARD="n"; fi
+        log "INFO" "Update Mode: Preserving WireGuard setting ($USE_WIREGUARD)"
+        return
+    fi
+
+    echo -e "\n${BLUE}=== Step: WireGuard Management VPN ===${NC}"
+    # --- CI/CD AUTO MODE CHECK ---
+    if [[ "${1:-}" == "auto" ]]; then
+        input_wg=${SYSWARDEN_ENABLE_WG:-n}
+        log "INFO" "Auto Mode: WireGuard choice loaded via env var [${input_wg}]"
+    else
+        echo -e "${YELLOW}Deploy an ultra-secure, invisible WireGuard VPN for administration?${NC}"
+        read -p "Enable WireGuard Management VPN? (y/N): " input_wg
+    fi
+
+    if [[ "$input_wg" =~ ^[Yy]$ ]]; then
+        USE_WIREGUARD="y"
+        if [[ "${1:-}" == "auto" ]]; then
+            WG_PORT=${SYSWARDEN_WG_PORT:-51820}
+            WG_SUBNET=${SYSWARDEN_WG_SUBNET:-"10.66.66.0/24"}
+        else
+            read -p "Enter WireGuard Port [Default: 51820]: " input_wg_port
+            WG_PORT=${input_wg_port:-51820}
+            read -p "Enter VPN Subnet (CIDR) [Default: 10.66.66.0/24]: " input_wg_subnet
+            WG_SUBNET=${input_wg_subnet:-"10.66.66.0/24"}
+        fi
+        
+        # PRE-CREATION: Ensure /etc/wireguard exists EARLY so Fail2ban detects it globally
+        mkdir -p /etc/wireguard
+        log "INFO" "WireGuard ENABLED (Port: $WG_PORT, Subnet: $WG_SUBNET)."
+    else
+        USE_WIREGUARD="n"
+        log "INFO" "WireGuard DISABLED."
+    fi
+    
+    echo "USE_WIREGUARD='$USE_WIREGUARD'" >> "$CONF_FILE"
+    if [[ "$USE_WIREGUARD" == "y" ]]; then
+        echo "WG_PORT='$WG_PORT'" >> "$CONF_FILE"
+        echo "WG_SUBNET='$WG_SUBNET'" >> "$CONF_FILE"
+    fi
 }
 
 define_docker_integration() {
@@ -722,8 +779,20 @@ apply_firewall_rules() {
             asn_rule="ip saddr @$ASN_SET_NAME log prefix \"[SysWarden-ASN] \" flags all drop"
         fi
 
+        # 3.5 WireGuard SSH Cloaking Rule
+        local wg_ssh_rule=""
+        local ct_rule=""
+        if [[ "${USE_WIREGUARD:-n}" == "y" ]]; then
+            ct_rule="ct state established,related accept"
+            # Si ce n'est ni l'interface VPN (wg0), ni le localhost (lo), on DROP le SSH.
+            wg_ssh_rule="iifname != \"wg0\" iifname != \"lo\" tcp dport ${SSH_PORT:-22} log prefix \"[SysWarden-SSH-DROP] \" drop"
+        fi
+
         # 4. Build and Apply Nftables config (Respecting Priority)
         cat <<EOF > "$TMP_DIR/syswarden.nft"
+add table inet syswarden_table
+flush table inet syswarden_table
+
 table inet syswarden_table {
     set $SET_NAME {
         type ipv4_addr
@@ -734,6 +803,9 @@ table inet syswarden_table {
     chain input {
         type filter hook input priority filter - 10; policy accept;
         
+        # State tracking to keep current SSH session alive during installation
+        $ct_rule
+        
         # PRIORITY 1: Geo-Blocking (Broadest scope)
         $geoip_rule
         
@@ -743,6 +815,9 @@ table inet syswarden_table {
         # PRIORITY 3: Standard Blocklist & Scanners
         ip saddr @$SET_NAME log prefix "[SysWarden-BLOCK] " flags all drop
         tcp dport { 23, 445, 1433, 3389, 5900 } log prefix "[SysWarden-BLOCK] " flags all drop
+        
+        # PRIORITY 4: WireGuard SSH Cloaking
+        $wg_ssh_rule
     }
 }
 EOF
@@ -758,9 +833,19 @@ EOF
     elif [[ "$FIREWALL_BACKEND" == "firewalld" ]]; then
         if ! systemctl is-active --quiet firewalld; then systemctl enable --now firewalld; fi
         
-        if [[ -n "${SSH_PORT:-}" ]]; then
+        # --- WIREGUARD SSH CLOAKING ---
+        if [[ "${USE_WIREGUARD:-n}" == "y" ]]; then
+            log "INFO" "WireGuard: Removing public SSH port access from Firewalld..."
+            firewall-cmd --permanent --remove-port="${SSH_PORT:-22}/tcp" >/dev/null 2>&1 || true
+            firewall-cmd --permanent --remove-service="ssh" >/dev/null 2>&1 || true
+            firewall-cmd --permanent --add-port="${WG_PORT:-51820}/udp" >/dev/null 2>&1 || true
+            
+            # Explicitly allow SSH from the WireGuard Subnet ONLY
+            firewall-cmd --permanent --add-rich-rule="rule family='ipv4' source address='${WG_SUBNET}' port port='${SSH_PORT:-22}' protocol='tcp' accept" >/dev/null 2>&1 || true
+        elif [[ -n "${SSH_PORT:-}" ]]; then
             firewall-cmd --permanent --add-port="${SSH_PORT}/tcp" >/dev/null 2>&1 || true
         fi
+        # ------------------------------
 
         log "INFO" "Preparing Firewalld IPSets (Bypassing DBus limitations)..."
         
@@ -866,6 +951,19 @@ EOF
             echo "-A ufw-before-input -m set --match-set $SET_NAME src -j DROP" >> "$UFW_RULES"
         fi
 
+        # --- WIREGUARD SSH CLOAKING ---
+        if [[ "${USE_WIREGUARD:-n}" == "y" ]]; then
+            # 1. Allow UDP port for WireGuard Tunnel
+            ufw allow "${WG_PORT:-51820}/udp" >/dev/null 2>&1 || true
+            
+            # 2. Allow SSH strictly from the WG Subnet
+            ufw allow from "${WG_SUBNET}" to any port "${SSH_PORT:-22}" proto tcp >/dev/null 2>&1 || true
+            
+            # 3. Deny public SSH access
+            ufw deny "${SSH_PORT:-22}/tcp" >/dev/null 2>&1 || true
+        fi
+        # ------------------------------
+
         # --- GEOIP INJECTION ---
         if [[ "${GEOBLOCK_COUNTRIES:-none}" != "none" ]] && [[ -s "$GEOIP_FILE" ]]; then
             log "INFO" "Configuring UFW GeoIP Set..."
@@ -949,6 +1047,20 @@ EOF
                 iptables -I INPUT 1 -m set --match-set "$GEOIP_SET_NAME" src -j LOG --log-prefix "[SysWarden-GEO] "
             fi
         fi
+		
+		# --- WIREGUARD SSH CLOAKING ---
+        if [[ "${USE_WIREGUARD:-n}" == "y" ]]; then
+            # Clean existing WG rules first to prevent duplicates
+            while iptables -D INPUT -p tcp --dport "${SSH_PORT:-22}" -j DROP 2>/dev/null; do :; done
+            while iptables -D INPUT -i wg0 -p tcp --dport "${SSH_PORT:-22}" -j ACCEPT 2>/dev/null; do :; done
+            while iptables -D INPUT -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT 2>/dev/null; do :; done
+            
+            # Insert top-priority rules (inserted in reverse order, position 1)
+            iptables -I INPUT 1 -p tcp --dport "${SSH_PORT:-22}" -j DROP
+            iptables -I INPUT 1 -i wg0 -p tcp --dport "${SSH_PORT:-22}" -j ACCEPT
+            iptables -I INPUT 1 -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
+        fi
+        # ------------------------------
         
         # Save IPtables persistence for legacy OS
         if command -v netfilter-persistent >/dev/null; then netfilter-persistent save; 
@@ -2008,6 +2120,138 @@ EOF
     fi 
 }
 
+setup_wireguard() {
+    if [[ "${USE_WIREGUARD:-n}" != "y" ]]; then
+        return
+    fi
+
+    echo -e "\n${BLUE}=== Step: Configuring WireGuard VPN ===${NC}"
+    
+    # 1. IDEMPOTENCY CHECK: Never overwrite existing keys!
+    if [[ -f "/etc/wireguard/wg0.conf" ]]; then
+        log "INFO" "WireGuard configuration already exists. Skipping key generation to prevent VPN lockout."
+        return
+    fi
+
+    log "INFO" "Initializing WireGuard cryptographic engine..."
+
+    # 2. STRICT DIRECTORY SANDBOXING
+    mkdir -p /etc/wireguard/clients
+    chmod 700 /etc/wireguard
+    chmod 700 /etc/wireguard/clients
+
+    # 3. KERNEL ROUTING (IP FORWARDING)
+    # Required for the VPN tunnel to access the internet and internal services
+    log "INFO" "Enabling Kernel IPv4 Forwarding..."
+    echo "net.ipv4.ip_forward = 1" > /etc/sysctl.d/99-syswarden-wireguard.conf
+    sysctl -p /etc/sysctl.d/99-syswarden-wireguard.conf >/dev/null 2>&1 || true
+
+    # 4. SECURE IN-MEMORY KEY GENERATION
+    # Using local variables prevents keys from leaking into stdout or logs
+    local SERVER_PRIV; SERVER_PRIV=$(wg genkey)
+    local SERVER_PUB; SERVER_PUB=$(echo "$SERVER_PRIV" | wg pubkey)
+    local CLIENT_PRIV; CLIENT_PRIV=$(wg genkey)
+    local CLIENT_PUB; CLIENT_PUB=$(echo "$CLIENT_PRIV" | wg pubkey)
+    local PRESHARED_KEY; PRESHARED_KEY=$(wg genpsk)
+
+    # 5. DYNAMIC NETWORK CALCULATIONS
+    local ACTIVE_IF; ACTIVE_IF=$(ip route get 8.8.8.8 2>/dev/null | grep -oP 'dev \K\S+' | head -n 1)
+    [[ -z "$ACTIVE_IF" ]] && ACTIVE_IF="eth0"
+    
+    local SERVER_IP
+    SERVER_IP=$(curl -4 -s --connect-timeout 3 api.ipify.org 2>/dev/null || \
+                curl -4 -s --connect-timeout 3 ifconfig.me 2>/dev/null || \
+                curl -4 -s --connect-timeout 3 icanhazip.com 2>/dev/null || \
+                ip -4 addr show "$ACTIVE_IF" | grep -oP '(?<=inet\s)\d+(\.\d+){3}' | head -n 1)
+    
+    # Safely extract base network (e.g., 10.66.66.0/24 -> 10.66.66)
+    local SUBNET_BASE; SUBNET_BASE=$(echo "$WG_SUBNET" | cut -d'.' -f1,2,3)
+    local SERVER_VPN_IP="${SUBNET_BASE}.1"
+    local CLIENT_VPN_IP="${SUBNET_BASE}.2"
+
+    # 6. DYNAMIC FIREWALL NAT (MASQUERADE)
+    # Adapts WireGuard PostUp/PostDown hooks to the active firewall engine
+    local POSTUP=""
+    local POSTDOWN=""
+    
+    case "$FIREWALL_BACKEND" in
+        "nftables")
+            POSTUP="nft add table inet syswarden_wg; nft add chain inet syswarden_wg prerouting { type nat hook prerouting priority 0 \\; }; nft add chain inet syswarden_wg postrouting { type nat hook postrouting priority 100 \\; }; nft add rule inet syswarden_wg postrouting oifname \"$ACTIVE_IF\" masquerade"
+            POSTDOWN="nft delete table inet syswarden_wg 2>/dev/null || true"
+            ;;
+        "firewalld")
+            # Smart fallback: Attempts the modern method (add-forward), otherwise reverts to Direct Rules (old RHEL)
+            POSTUP="firewall-cmd --add-masquerade; firewall-cmd --add-interface=wg0 2>/dev/null || true; firewall-cmd --add-forward 2>/dev/null || { firewall-cmd --direct --add-rule ipv4 filter FORWARD 0 -i wg0 -j ACCEPT; firewall-cmd --direct --add-rule ipv4 filter FORWARD 0 -o wg0 -j ACCEPT; }"
+            POSTDOWN="firewall-cmd --remove-masquerade; firewall-cmd --remove-interface=wg0 2>/dev/null || true; firewall-cmd --remove-forward 2>/dev/null || { firewall-cmd --direct --remove-rule ipv4 filter FORWARD 0 -i wg0 -j ACCEPT; firewall-cmd --direct --remove-rule ipv4 filter FORWARD 0 -o wg0 -j ACCEPT; }"
+            ;;
+        *)
+            # Standard Iptables / UFW Fallback
+            POSTUP="iptables -t nat -A POSTROUTING -s $WG_SUBNET -o $ACTIVE_IF -j MASQUERADE; iptables -I FORWARD 1 -i wg0 -j ACCEPT; iptables -I FORWARD 1 -o wg0 -j ACCEPT"
+            POSTDOWN="iptables -t nat -D POSTROUTING -s $WG_SUBNET -o $ACTIVE_IF -j MASQUERADE; iptables -D FORWARD -i wg0 -j ACCEPT; iptables -D FORWARD -o wg0 -j ACCEPT"
+            ;;
+    esac
+
+    # 7. WRITE SERVER CONFIGURATION (wg0.conf)
+    log "INFO" "Deploying WireGuard Server Profile..."
+    cat <<EOF > /etc/wireguard/wg0.conf
+# SysWarden WireGuard Server Configuration
+[Interface]
+Address = ${SERVER_VPN_IP}/24
+ListenPort = $WG_PORT
+PrivateKey = $SERVER_PRIV
+PostUp = $POSTUP
+PostDown = $POSTDOWN
+
+[Peer]
+# Admin Workstation Client
+PublicKey = $CLIENT_PUB
+PresharedKey = $PRESHARED_KEY
+AllowedIPs = ${CLIENT_VPN_IP}/32
+EOF
+    chmod 600 /etc/wireguard/wg0.conf
+
+    # 8. WRITE CLIENT CONFIGURATION (admin-pc.conf)
+    log "INFO" "Generating Secure Client Profile..."
+    cat <<EOF > /etc/wireguard/clients/admin-pc.conf
+[Interface]
+PrivateKey = $CLIENT_PRIV
+Address = ${CLIENT_VPN_IP}/24
+DNS = 94.140.14.14, 94.140.15.15
+
+[Peer]
+PublicKey = $SERVER_PUB
+PresharedKey = $PRESHARED_KEY
+Endpoint = ${SERVER_IP}:${WG_PORT}
+AllowedIPs = 0.0.0.0/0, ::/0
+PersistentKeepalive = 25
+EOF
+    chmod 600 /etc/wireguard/clients/admin-pc.conf
+
+    # 9. SERVICE ORCHESTRATION
+    log "INFO" "Starting WireGuard Tunnel Interface (wg0)..."
+    if command -v systemctl >/dev/null; then
+        systemctl daemon-reload
+        systemctl enable --now wg-quick@wg0 >/dev/null 2>&1 || true
+    fi
+    
+    log "INFO" "WireGuard VPN deployed successfully."
+}
+
+display_wireguard_qr() {
+    # This runs at the VERY END to display the QR code cleanly without interrupting logs
+    if [[ "${USE_WIREGUARD:-n}" == "y" ]] && [[ -f "/etc/wireguard/clients/admin-pc.conf" ]]; then
+        echo -e "\n${RED}========================================================================${NC}"
+        echo -e "${YELLOW}           WIREGUARD MANAGEMENT VPN - SCAN TO CONNECT${NC}"
+        echo -e "${RED}========================================================================${NC}\n"
+        
+        # Generates a high-contrast ANSI UTF-8 QR Code directly in the terminal
+        qrencode -t ansiutf8 < /etc/wireguard/clients/admin-pc.conf
+        
+        echo -e "\n${GREEN}[✔] Client Configuration File Saved At:${NC} /etc/wireguard/clients/admin-pc.conf"
+        echo -e "${YELLOW}Keep this secure! Scan this code with the WireGuard App to connect.${NC}"
+    fi
+}
+
 setup_abuse_reporting() {
     echo -e "\n${BLUE}=== Step 7: AbuseIPDB Reporting Setup ===${NC}"
     
@@ -2329,6 +2573,47 @@ uninstall_syswarden() {
     systemctl disable syswarden-ipset 2>/dev/null || true
     rm -f /etc/systemd/system/syswarden-ipset.service /etc/syswarden/ipsets.save
     systemctl daemon-reload
+	
+	# --- WIREGUARD CLEANUP ---
+    if [[ -d "/etc/wireguard" ]] || [[ "${USE_WIREGUARD:-n}" == "y" ]]; then
+        log "INFO" "Stopping and removing WireGuard VPN..."
+        
+        # 1. Stop the tunnel and remove the service
+        if command -v systemctl >/dev/null; then
+            systemctl disable --now wg-quick@wg0 >/dev/null 2>&1 || true
+        fi
+        
+        # Note: wg-quick's 'PostDown' hook automatically cleans up the NAT rules we injected!
+        
+        # 2. Remove Keys and Configs
+        rm -rf /etc/wireguard
+        
+        # 3. Disable Kernel Routing
+        rm -f /etc/sysctl.d/99-syswarden-wireguard.conf
+        sysctl --system >/dev/null 2>&1 || true
+        
+        # 4. Clean specific firewall port openings & RESTORE PUBLIC SSH
+        if [[ "$FIREWALL_BACKEND" == "firewalld" ]]; then
+            firewall-cmd --permanent --remove-port="${WG_PORT:-51820}/udp" >/dev/null 2>&1 || true
+            firewall-cmd --permanent --remove-rich-rule="rule family='ipv4' source address='${WG_SUBNET}' port port='${SSH_PORT:-22}' protocol='tcp' accept" >/dev/null 2>&1 || true
+            # EMERGENCY SSH RESTORE
+            firewall-cmd --permanent --add-port="${SSH_PORT:-22}/tcp" >/dev/null 2>&1 || true
+            firewall-cmd --reload >/dev/null 2>&1 || true
+        elif [[ "$FIREWALL_BACKEND" == "ufw" ]]; then
+            ufw delete allow "${WG_PORT:-51820}/udp" >/dev/null 2>&1 || true
+            ufw delete allow from "${WG_SUBNET}" to any port "${SSH_PORT:-22}" proto tcp >/dev/null 2>&1 || true
+            # EMERGENCY SSH RESTORE
+            ufw delete deny "${SSH_PORT:-22}/tcp" >/dev/null 2>&1 || true
+            ufw reload >/dev/null 2>&1 || true
+        fi
+        
+        # EMERGENCY SSH RESTORE FOR IPTABLES
+        if command -v iptables >/dev/null; then
+            while iptables -D INPUT -p tcp --dport "${SSH_PORT:-22}" -j DROP 2>/dev/null; do :; done
+            if command -v netfilter-persistent >/dev/null; then netfilter-persistent save 2>/dev/null || true; fi
+        fi
+    fi
+    # -------------------------
 
     # 2. Remove Cron & Logrotate
     log "INFO" "Removing Maintenance Tasks..."
@@ -2960,7 +3245,7 @@ fi
 if [[ "$MODE" != "update" ]]; then
     clear
     echo -e "${GREEN}#############################################################"
-    echo -e "#     SysWarden Tool Installer (Universal v8.11)     #"
+    echo -e "#     SysWarden Tool Installer (Universal v9.01)     #"
     echo -e "#############################################################${NC}"
 fi
 
@@ -2988,6 +3273,7 @@ if [[ "$MODE" != "update" ]]; then
     # ---------------------------------
     
     define_ssh_port "$MODE"
+	define_wireguard "$MODE"
     define_docker_integration "$MODE"
     define_geoblocking "$MODE"
     define_asnblocking "$MODE"
@@ -3007,6 +3293,7 @@ if command -v systemctl >/dev/null && systemctl is-active --quiet syswarden-repo
 fi
 
 if [[ "$MODE" != "update" ]]; then
+    setup_wireguard
     setup_siem_logging
     setup_abuse_reporting "$MODE"
     setup_wazuh_agent "$MODE"
@@ -3022,4 +3309,6 @@ if [[ "$MODE" != "update" ]]; then
     fi
     
     echo -e " -> Protection: Active"
+	
+	display_wireguard_qr
 fi
