@@ -158,6 +158,8 @@ install_dependencies() {
         if [[ -f /etc/debian_version ]]; then 
             apt-get install -y wireguard qrencode
         elif [[ -f /etc/redhat-release ]]; then 
+            log "INFO" "Enabling EPEL repository (Required for Qrencode)..."
+            dnf install -y epel-release || true
             dnf install -y wireguard-tools qrencode
         fi
     fi
